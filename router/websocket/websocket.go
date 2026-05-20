@@ -15,15 +15,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/pterodactyl/wings/internal/models"
+	"github.com/Rene-Roscher/wings/internal/models"
 
-	"github.com/pterodactyl/wings/system"
+	"github.com/Rene-Roscher/wings/system"
 
-	"github.com/pterodactyl/wings/config"
-	"github.com/pterodactyl/wings/environment"
-	"github.com/pterodactyl/wings/environment/docker"
-	"github.com/pterodactyl/wings/router/tokens"
-	"github.com/pterodactyl/wings/server"
+	"github.com/Rene-Roscher/wings/config"
+	"github.com/Rene-Roscher/wings/environment"
+	"github.com/Rene-Roscher/wings/environment/docker"
+	"github.com/Rene-Roscher/wings/router/tokens"
+	"github.com/Rene-Roscher/wings/server"
 )
 
 const (
@@ -155,7 +155,9 @@ func (h *Handler) SendJson(v Message) error {
 
 		// If the user does not have permission to see backup events, do not emit
 		// them over the socket.
-		if strings.HasPrefix(string(v.Event), server.BackupCompletedEvent) {
+		if strings.HasPrefix(string(v.Event), server.BackupCompletedEvent) ||
+			strings.HasPrefix(string(v.Event), server.BackupRestoreCompletedEvent) ||
+			string(v.Event) == server.BackupProgressEvent {
 			if !j.HasPermission(PermissionReceiveBackups) {
 				return nil
 			}
