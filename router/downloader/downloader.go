@@ -26,6 +26,7 @@ var client *http.Client
 func init() {
 	dialer := &net.Dialer{
 		LocalAddr: nil,
+		Timeout:   time.Second * 30,
 	}
 
 	trnspt := http.DefaultTransport.(*http.Transport).Clone()
@@ -56,10 +57,8 @@ func init() {
 	}
 
 	client = &http.Client{
-		Timeout: time.Hour * 12,
-
+		Timeout:   time.Hour * 2,
 		Transport: trnspt,
-
 		// Disallow any redirect on an HTTP call. This is a security requirement: do not modify
 		// this logic without first ensuring that the new target location IS NOT within the current
 		// instance's local network.
@@ -607,4 +606,8 @@ func mustParseCIDR(ip string) *net.IPNet {
 		panic(fmt.Errorf("downloader: failed to parse CIDR: %s", err))
 	}
 	return block
+}
+
+func IsDownloadError(err error) bool {
+	return errors.Is(err, ErrDownloadFailed) || errors.Is(err, ErrInvalidIPAddress) || errors.Is(err, ErrInternalResolution)
 }
