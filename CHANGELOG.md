@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.13.0
+### Fixed
+* Empty folders in uploaded artifacts are now preserved ([#325](https://github.com/pterodactyl/wings/pull/325))
+* Directories created via the panel are no longer owned by `root:root` ([#328](https://github.com/pterodactyl/wings/pull/328))
+* Fixed the length check when accepting SFTP connections
+* Properly close filesystem copies, compression streams, and Docker responses to avoid resource leaks
+* The `file` config parser no longer creates files that do not exist yet
+
+### Added
+* Only set the container block IO weight when the host supports `io.weight` ([#324](https://github.com/pterodactyl/wings/pull/324))
+* Reasonable 64 MB limits for config file parsing and line scanning
+
+## v1.12.3
+### Fixed
+* Support properly restricting configuration in egg templating
+
 ## v1.12.2
 ### Fixed
 * Fixes a bug where `fs.Chmod` would change the symlink target possibly allowing a malicious user to modify files outside their home directory.

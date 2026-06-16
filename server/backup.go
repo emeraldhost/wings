@@ -675,8 +675,16 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 		// Handle directories and files differently
 		if info.IsDir() {
 			// For directories, create the directory structure using the underlying UnixFS
-			if err := s.Filesystem().UnixFS().MkdirAll(file, ufs.FileMode(info.Mode())); err != nil {
+			created, err := s.Filesystem().UnixFS().MkdirAll(file, ufs.FileMode(info.Mode()))
+			if err != nil {
 				return err
+			}
+			// Chown every directory we just created so restored directories are
+			// owned by the server user instead of the user Wings runs as.
+			for _, dir := range created {
+				if err := s.Filesystem().Chown(dir); err != nil {
+					return err
+				}
 			}
 			// Set directory timestamps
 			atime := info.ModTime()
