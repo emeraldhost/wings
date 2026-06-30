@@ -108,16 +108,17 @@ These sit on **different** values/fields than upstream; they will re-appear in a
 | `server/backup_operations.go` | `maxConcurrentBackups/Restores = 8`; cleanup ticker 5 min / op TTL 8 h; backup 6 h / restore 4 h timeouts | Fork-chosen capacity/timeouts. |
 | `server/backup_progress.go` | 250 ms throttle; S3 80/20 split; 1 MB chunking | Determines WS emission rate / S3 percentage curve. |
 | `server/backup/backup_s3.go` | per-part upload `Content-Type: application/octet-stream` (upstream `application/x-gzip`) | Because the fork supports multiple formats. Verify Panel/S3 presigned flow tolerates it. |
-| `.github/workflows/release.yaml` | release-bot git identity is still `ci@pterodactyl.io` / `Pterodactyl CI` | Stale upstream leftover — fork releases are attributed to "Pterodactyl CI". |
-| `.github/FUNDING.yaml` | `github: [pterodactyl]` (unchanged) | Stale — points sponsorship at the upstream org. |
 
 ---
 
-## 3. Known concerns flagged for review
+## 3. Known issues in our own fork code (tech debt)
 
-Not necessarily things to preserve — surfaced during the fork audit and worth fixing/confirming.
+Every item below was **verified fork-only** (`git grep` against upstream `e771816` returns
+zero hits) — upstream wings does **not** do these, so they are **our** code/behavior, not
+inherited upstream defaults that can be ignored. These are not "divergences to preserve" so
+much as bugs/concerns in our own additions, worth fixing rather than defending on upgrade.
 
-| Area | Concern |
+| Area | Concern (all fork-only) |
 |------|---------|
 | **Committed binaries** | `wings-debug`, `wings-fixed`, `wings-test` (~41 MB each) and `dist/wings_test` (~28 MB) are committed build artifacts (~150 MB total), not gitignored. Repo bloat / accidental commits. |
 | **Backup cleanup scope** | `cleanupBackupFiles` (server.go) and `CleanupBackupFilesForServer` (backup_local.go) match backup files by **filename pattern only** and do **not** filter by the server's ID. Since the backup directory is shared, deleting one server can remove **other** servers' local backups. |
@@ -140,3 +141,5 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 | `config/config.go` → `Backups.RestoreHostAllowlist` | **Upstream v1.13.1.** Pairs with the SSRF allowlist above. Not a fork field. |
 | `server/backup/backup.go` → `validateIdentifier()` / `normalizedIdentifier()` (+ `Path()` `path.Base` fallback) | **Upstream v1.13.1** UUID hardening. The fork uses them unchanged. |
 | `system/const.go` | Byte-identical to upstream (`Version = "develop"`). |
+| `.github/FUNDING.yaml` (`github: [pterodactyl]`) | **Upstream default, unchanged** (`git diff e771816 HEAD` is empty). Stale for a fork (sponsorship points at upstream) but NOT our change — clean it up if desired, don't track it as a divergence. |
+| `.github/workflows/release.yaml` release-bot identity (`ci@pterodactyl.io` / `Pterodactyl CI`) | **Upstream default, unchanged.** Upstream's release.yaml already sets this identity. Not our divergence. |
