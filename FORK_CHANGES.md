@@ -80,12 +80,16 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | `router/router.go` | Fork-only routes `GET /backup/operations` and `DELETE /backup/:backup/cancel`. |
 | `router/router_server_backup.go` | `cancelServerBackup` + `getServerBackupOperations` (fork-only). `postServerBackup` / `postServerRestoreBackup` rewritten: 409 concurrency guards, registry queueing, timeouts, panic recovery, retry, S3 download progress, and content-type via `backup.IsValidBackupContentType` (gzip+zstd+tar) instead of upstream's gzip-only check. |
 
-### 1.3 SFTP hardening & activity streaming
+### 1.3 SFTP activity streaming
 
 | Path | What |
 |------|------|
-| `sftp/server.go` | **Fork-new `SmartSecurityProtector`** — adaptive SFTP brute-force / IP-reputation blocking (per-IP attempt windows, escalating block durations, reputation score), wired into the accept loop; suspicious-username logging. |
 | `sftp/event.go`, `sftp/handler.go` | `EventPublisher` interface + `publisher` on the event handler → SFTP file actions streamed to the panel via `Server.PublishActivity` (in addition to DB persistence). |
+
+> The fork's previous `SmartSecurityProtector` SFTP brute-force/IP-reputation system
+> (and its `sftp.security.*` config) was **removed** — `sftp/server.go` now matches upstream
+> (vanilla SFTP auth) apart from the module rename. SFTP abuse protection is left to the
+> network layer (firewall / fail2ban) / the Panel.
 
 ### 1.4 Repo config
 
@@ -104,7 +108,6 @@ These sit on **different** values/fields than upstream; they will re-appear in a
 | Path | Fork value / field | Note |
 |------|--------------------|------|
 | `config/config.go` → `Backups.Format` | `"gzip"` (default) / `"zstd"` | Fork-only field. ⚠️ Currently largely **inert**: only the (unused) system-tar streamer reads it; the active Go archiver ignores it. |
-| `config/config.go` → `Sftp.Security.*` | `SftpSecurityConfiguration` (thresholds 6/min, 15/h, 50/day; base block 5 min, escalation ×2, max 24h; reputation block_threshold −50, memory 7d) | Backing config for the SFTP `SmartSecurityProtector`. Default values are EmeraldHost policy. |
 | `server/backup_operations.go` | `maxConcurrentBackups/Restores = 8`; cleanup ticker 5 min / op TTL 8 h; backup 6 h / restore 4 h timeouts | Fork-chosen capacity/timeouts. |
 | `server/backup_progress.go` | 250 ms throttle; S3 80/20 split; 1 MB chunking | Determines WS emission rate / S3 percentage curve. |
 | `server/backup/backup_s3.go` | per-part upload `Content-Type: application/octet-stream` (upstream `application/x-gzip`) | Because the fork supports multiple formats. Verify Panel/S3 presigned flow tolerates it. |
