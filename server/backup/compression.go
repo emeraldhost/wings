@@ -9,7 +9,6 @@ type CompressionFormat string
 
 const (
 	CompressionGzip CompressionFormat = "gzip"
-	CompressionZstd CompressionFormat = "zstd"
 	CompressionTar  CompressionFormat = "tar"
 	CompressionNone CompressionFormat = "none"
 )
@@ -50,21 +49,6 @@ func (g *gzipAdapter) ContentTypes() []string {
 }
 func (g *gzipAdapter) IsSupported() bool   { return true }
 func (g *gzipAdapter) Description() string { return "GZIP compression" }
-
-// zstdAdapter implements CompressionAdapter for ZSTD format
-type zstdAdapter struct{}
-
-func (z *zstdAdapter) Format() CompressionFormat { return CompressionZstd }
-func (z *zstdAdapter) Extension() string         { return ".zst" }
-func (z *zstdAdapter) ContentTypes() []string {
-	return []string{
-		"application/x-zstd",
-		"application/zstd",
-		"application/x-zstandard",
-	}
-}
-func (z *zstdAdapter) IsSupported() bool   { return true }
-func (z *zstdAdapter) Description() string { return "ZSTD compression (high performance)" }
 
 // tarAdapter implements CompressionAdapter for TAR format
 type tarAdapter struct{}
@@ -107,7 +91,6 @@ func NewCompressionRegistry() *CompressionRegistry {
 	
 	// Register default compression formats
 	registry.Register(&gzipAdapter{})
-	registry.Register(&zstdAdapter{}) 
 	registry.Register(&tarAdapter{})
 	registry.Register(&noneAdapter{})
 	

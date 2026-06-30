@@ -485,7 +485,7 @@ func (s *Server) cleanupBackupFiles() error {
 	var failedRemovals []string
 
 	// Common backup file extensions
-	backupExtensions := []string{".tar.gz", ".tar.zst", ".tar", ".gz", ".zst"}
+	backupExtensions := []string{".tar.gz", ".tar", ".gz"}
 
 	// Iterate through all files and find backup files
 	for _, file := range files {

@@ -595,7 +595,7 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 	var estimatedTotal int64
 	if downloadSize > 0 {
 		// For S3: Use actual download size with conservative multiplier for extraction
-		// Downloaded archives typically expand 3-4x when extracted (gzip/zstd compression)
+		// Downloaded archives typically expand 3-4x when extracted (gzip compression)
 		// Using 3.2x gives good results without overshooting too much
 		estimatedTotal = int64(float64(downloadSize) * 3.2)
 		s.Log().WithField("download_size", downloadSize).WithField("estimated_restore_size", estimatedTotal).Info("set restore progress total from download size")
@@ -802,13 +802,9 @@ func (s *Server) validateBackupIntegrity(b backup.BackupInterface) error {
 		return errors.New("cannot read backup file header")
 	}
 
-	// Check for GZIP magic bytes (0x1f, 0x8b) or ZSTD magic bytes (0x28, 0xb5)
+	// Check for GZIP magic bytes (0x1f, 0x8b)
 	if magic[0] == 0x1f && magic[1] == 0x8b {
 		// Valid GZIP
-		return nil
-	}
-	if magic[0] == 0x28 && magic[1] == 0xb5 {
-		// Valid ZSTD
 		return nil
 	}
 

@@ -14,7 +14,6 @@ type CompressionFormat int
 const (
 	CompressionUnknown CompressionFormat = iota
 	CompressionGzip
-	CompressionZstd // Kept for backward compatibility but no longer supported
 	CompressionNone
 )
 
@@ -37,9 +36,6 @@ func DetectCompressionFormat(reader io.ReadCloser) (CompressionFormat, io.ReadCl
 		return CompressionGzip, io.NopCloser(peekReader), errors.New("backup: insufficient data for format detection")
 	}
 
-	// ZSTD is no longer supported - skip detection
-	// (Previously checked for 0x28B52FFD magic bytes)
-
 	// GZIP magic: 0x1F8B (validate both bytes for security)
 	if len(header) >= 2 && header[0] == 0x1F && header[1] == 0x8B {
 		return CompressionGzip, io.NopCloser(peekReader), nil
@@ -57,11 +53,6 @@ func CreateDecompressor(reader io.ReadCloser, format CompressionFormat) (io.Read
 	}
 	
 	switch format {
-	case CompressionZstd:
-		// ZSTD is no longer supported
-		reader.Close()
-		return nil, errors.New("backup: ZSTD compression is no longer supported")
-
 	case CompressionGzip:
 		gzReader, err := gzip.NewReader(reader)
 		if err != nil {

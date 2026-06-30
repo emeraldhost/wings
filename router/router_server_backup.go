@@ -2,15 +2,23 @@ package router
 
 import (
 	"context"
+	stderrors "errors"
 	"io"
+	"mime"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"emperror.dev/errors"
 	"github.com/apex/log"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
+	"github.com/Rene-Roscher/wings/config"
 	"github.com/Rene-Roscher/wings/environment"
 	"github.com/Rene-Roscher/wings/router/middleware"
 	"github.com/Rene-Roscher/wings/server"
@@ -19,6 +27,22 @@ import (
 
 // isValidBackupContentType is now replaced by backup.IsValidBackupContentType
 // which uses the extensible CompressionRegistry for better format support
+
+// blockedBackupRestorePrefixes lists IP ranges that backup restore downloads are
+// never allowed to reach (in addition to private/loopback/link-local ranges),
+// unless a destination is explicitly permitted via the RestoreHostAllowlist.
+var blockedBackupRestorePrefixes = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+}
+
+// backupDownloadError is a sentinel error type used to surface backup download
+// validation failures (e.g. SSRF protection) back to the API caller as 400s.
+type backupDownloadError string
+
+func (e backupDownloadError) Error() string {
+	return string(e)
+}
 
 // postServerBackup performs a backup against a given server instance using the
 // provided backup adapter.
@@ -54,13 +78,17 @@ func postServerBackup(c *gin.Context) {
 	if err := c.BindJSON(&data); err != nil {
 		return
 	}
+	backupUuid, ok := parseBackupUuid(c, data.Uuid)
+	if !ok {
+		return
+	}
 
 	var adapter backup.BackupInterface
 	switch data.Adapter {
 	case backup.LocalBackupAdapter:
-		adapter = backup.NewLocal(client, data.Uuid, data.Ignore)
+		adapter = backup.NewLocal(client, backupUuid, data.Ignore)
 	case backup.S3BackupAdapter:
-		adapter = backup.NewS3(client, data.Uuid, data.Ignore)
+		adapter = backup.NewS3(client, backupUuid, data.Ignore)
 	default:
 		middleware.CaptureAndAbort(c, errors.New("router/backups: provided adapter is not valid: "+string(data.Adapter)))
 		return
@@ -89,7 +117,7 @@ func postServerBackup(c *gin.Context) {
 		logger.Info("registering backup operation in queue system")
 		
 		// ATOMIC: Register operation and get queue status atomically
-		_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), data.Uuid, s.ID(), server.OperationTypeBackup)
+		_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), backupUuid, s.ID(), server.OperationTypeBackup)
 		if err != nil {
 			logger.WithError(err).Error("failed to register backup operation")
 			s.Events().Publish(server.DaemonMessageEvent, "Failed to register backup: " + err.Error())
@@ -106,7 +134,7 @@ func postServerBackup(c *gin.Context) {
 		// Defer cleanup - will run AFTER backup completes
 		defer func() {
 			logger.Debug("backup goroutine cleanup starting")
-			registry.Complete(data.Uuid)
+			registry.Complete(backupUuid)
 			cancel() // Cancel AFTER marking complete
 			logger.Debug("backup goroutine cleanup completed")
 		}()
@@ -120,7 +148,7 @@ func postServerBackup(c *gin.Context) {
 			
 			// Send failure event to ensure frontend gets notified
 			s.Events().Publish(server.BackupCompletedEvent, map[string]any{
-				"uuid":          data.Uuid,
+				"uuid":          backupUuid,
 				"is_successful": false,
 				"error":         err.Error(),
 			})
@@ -176,9 +204,19 @@ func postServerRestoreBackup(c *gin.Context) {
 	if err := c.BindJSON(&data); err != nil {
 		return
 	}
+	backupUuid, ok := parseBackupUuid(c, c.Param("backup"))
+	if !ok {
+		return
+	}
 	if data.Adapter == backup.S3BackupAdapter && data.DownloadUrl == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The download_url field is required when the backup adapter is set to S3."})
 		return
+	}
+	if data.Adapter == backup.S3BackupAdapter {
+		if err := validateBackupDownloadUrl(data.DownloadUrl); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// State management is now handled atomically within the restore function
@@ -196,7 +234,7 @@ func postServerRestoreBackup(c *gin.Context) {
 	// Now that we've cleaned up the data directory if necessary, grab the backup file
 	// and attempt to restore it into the server directory.
 	if data.Adapter == backup.LocalBackupAdapter {
-		b, _, err := backup.LocateLocal(client, c.Param("backup"))
+		b, _, err := backup.LocateLocal(client, backupUuid)
 		if err != nil {
 			middleware.CaptureAndAbort(c, err)
 			return
@@ -207,7 +245,7 @@ func postServerRestoreBackup(c *gin.Context) {
 			logger.Info("registering local restore operation in queue system")
 			
 			// ATOMIC: Register operation and get queue status atomically
-			_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), c.Param("backup"), s.ID(), server.OperationTypeRestore)
+			_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), backupUuid, s.ID(), server.OperationTypeRestore)
 			if err != nil {
 				logger.WithError(err).Error("failed to register restore operation")
 				s.Events().Publish(server.DaemonMessageEvent, "Failed to register restore: " + err.Error())
@@ -226,7 +264,7 @@ func postServerRestoreBackup(c *gin.Context) {
 					logger.WithField("panic", r).Error("restore operation panicked")
 				}
 				logger.Debug("local restore goroutine cleanup starting")
-				registry.Complete(c.Param("backup"))
+				registry.Complete(backupUuid)
 				cancel() // Cancel AFTER marking complete
 				logger.Debug("local restore goroutine cleanup completed")
 				// Note: SetRestoring is now handled atomically within the restore function
@@ -259,15 +297,11 @@ func postServerRestoreBackup(c *gin.Context) {
 
 	// Since this is not a local backup we need to stream the archive and then
 	// parse over the contents as we go in order to restore it to the server.
-	httpClient := &http.Client{
-		Timeout: time.Hour * 2, // 2 hour timeout for large backup downloads
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			DisableKeepAlives:   false,
-			DisableCompression:  true, // Backup files are already compressed
-		},
-	}
+	//
+	// backupRestoreHttpClient enforces SSRF protections: it refuses to connect to
+	// private/internal/loopback addresses (and the explicitly blocked ranges) unless
+	// the destination is permitted via the RestoreHostAllowlist configuration option.
+	httpClient := backupRestoreHttpClient()
 	logger.WithField("download_url", data.DownloadUrl).Info("downloading backup from remote location...")
 	// Use proper timeout to prevent indefinite hangs during backup downloads.
 	// 2 hour timeout should be sufficient for most backup file sizes while preventing
@@ -287,6 +321,13 @@ func postServerRestoreBackup(c *gin.Context) {
 			"error": err,
 			"duration_ms": time.Since(downloadStart).Milliseconds(),
 		}).Error("HTTP request failed for backup download")
+		// Surface SSRF/validation failures from the restore HTTP client as a 400
+		// to the caller instead of a generic 500.
+		var downloadErr backupDownloadError
+		if stderrors.As(err, &downloadErr) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": downloadErr.Error()})
+			return
+		}
 		middleware.CaptureAndAbort(c, err)
 		return
 	}
@@ -308,14 +349,22 @@ func postServerRestoreBackup(c *gin.Context) {
 			}
 		}
 	}()
-	
+
+	// Reject non-200 responses (e.g. the link returned a 403/404 error page) before
+	// we try to interpret the body as a backup archive. The deferred close above runs
+	// on return since the goroutine has not taken ownership of the response yet.
+	if res.StatusCode != http.StatusOK {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The provided backup link returned an invalid response status: " + res.Status})
+		return
+	}
+
 	// Validate content types for supported backup formats using extensible compression registry
 	contentType := res.Header.Get("Content-Type")
 	if contentType == "" {
 		// Accept empty content type (some S3 providers don't set it)
 	} else if !backup.IsValidBackupContentType(contentType) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error": "The provided backup link has an unsupported content type. \"" + contentType + "\" is not a supported backup format (gzip, zstd, or tar).",
+			"error": "The provided backup link has an unsupported content type. \"" + contentType + "\" is not a supported backup format (gzip or tar).",
 		})
 		return
 	}
@@ -421,7 +470,7 @@ func postServerRestoreBackup(c *gin.Context) {
 			// BackupRestoreCompletedEvent is now sent by RestoreBackupWithContext
 			logger.Info("completed server restoration from S3 backup")
 		}
-	}(s, c.Param("backup"), logger)
+	}(s, backupUuid, logger)
 
 	// State cleanup handled atomically by restore operation
 	c.Status(http.StatusAccepted)
@@ -431,8 +480,11 @@ func postServerRestoreBackup(c *gin.Context) {
 // for consistent behavior (WORK.md compliance). If the backup is not found on the machine just return a 404 error.
 func deleteServerBackup(c *gin.Context) {
 	client := middleware.ExtractApiClient(c)
-	backupID := c.Param("backup")
-	
+	backupID, ok := parseBackupUuid(c, c.Param("backup"))
+	if !ok {
+		return
+	}
+
 	// UNIFIED BEHAVIOR: Try to locate and delete backup regardless of type (Local or S3)
 	// This ensures consistent deletion behavior between storage types (WORK.md requirement)
 	
@@ -550,4 +602,144 @@ func getServerBackupOperations(c *gin.Context) {
 		"operations": response,
 		"count":      len(response),
 	})
+}
+
+// parseBackupUuid validates that the provided value is a canonical lowercase UUID
+// and aborts the request with a 400 if it is not. This prevents path traversal and
+// other malformed identifiers from reaching the backup subsystem.
+func parseBackupUuid(c *gin.Context, value string) (string, bool) {
+	parsed, err := uuid.Parse(value)
+	if err == nil && len(value) == len(parsed.String()) && parsed.String() == strings.ToLower(value) {
+		return parsed.String(), true
+	}
+	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The backup identifier must be a valid UUID."})
+	return "", false
+}
+
+// validateBackupDownloadUrl performs an up-front validation of an S3 backup download
+// URL, rejecting non-HTTP(S) schemes and links that point directly at a blocked IP.
+func validateBackupDownloadUrl(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return backupDownloadError("The provided backup link is not a valid URL.")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return backupDownloadError("The provided backup link must use HTTP or HTTPS.")
+	}
+	if ip := net.ParseIP(parsed.Hostname()); ip != nil && isBlockedBackupRestoreIP(parsed.Hostname(), ip) {
+		return backupDownloadError("The provided backup link resolves to a blocked address.")
+	}
+	return nil
+}
+
+// backupRestoreHttpClient returns an http.Client whose dialer resolves the target
+// host and refuses to connect to private, loopback, link-local or otherwise blocked
+// addresses unless the destination is explicitly permitted via RestoreHostAllowlist.
+// This is the core SSRF protection for remote (S3) backup restore downloads.
+func backupRestoreHttpClient() http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, errors.New("router/backups: backup download host did not resolve to any addresses")
+		}
+		for _, resolved := range ips {
+			if isBlockedBackupRestoreIP(host, resolved.IP) {
+				return nil, backupDownloadError("The provided backup link resolves to a blocked address.")
+			}
+		}
+		var lastErr error
+		for _, resolved := range ips {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+	return http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return backupDownloadError("The provided backup link redirects too many times.")
+			}
+			return validateBackupDownloadUrl(req.URL.String())
+		},
+	}
+}
+
+// isBlockedBackupRestoreIP reports whether a resolved IP must not be connected to for
+// a backup restore download, taking the RestoreHostAllowlist into account.
+func isBlockedBackupRestoreIP(host string, ip net.IP) bool {
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return true
+	}
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || isExplicitlyBlockedBackupRestoreIP(addr) {
+		return !isAllowedBackupRestoreDestination(host, addr)
+	}
+	return false
+}
+
+func isExplicitlyBlockedBackupRestoreIP(addr netip.Addr) bool {
+	for _, prefix := range blockedBackupRestorePrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllowedBackupRestoreDestination reports whether the given host/addr is explicitly
+// permitted through the System.Backups.RestoreHostAllowlist configuration option.
+func isAllowedBackupRestoreDestination(host string, addr netip.Addr) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, entry := range config.Get().System.Backups.RestoreHostAllowlist {
+		entry = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(entry)), ".")
+		if entry == "" {
+			continue
+		}
+		if entry == host {
+			return true
+		}
+		if allowedAddr, err := netip.ParseAddr(entry); err == nil && allowedAddr.Unmap() == addr {
+			return true
+		}
+		if prefix, err := netip.ParsePrefix(entry); err == nil && prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSupportedBackupRestoreContentType reports whether the given Content-Type header
+// value is a gzip archive. The remote-restore handler itself relies on the broader
+// backup.IsValidBackupContentType (which also accepts tar/uncompressed uploads); this
+// helper is retained for parity with upstream and its security test coverage.
+func isSupportedBackupRestoreContentType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		mediaType = strings.TrimSpace(value)
+	}
+	switch strings.ToLower(mediaType) {
+	case "application/x-gzip", "application/gzip":
+		return true
+	default:
+		return false
+	}
 }

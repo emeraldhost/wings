@@ -17,12 +17,7 @@ func TestIsValidBackupContentType(t *testing.T) {
 		{"GZIP gzip", "application/gzip", true},
 		{"GZIP x-compressed", "application/x-compressed", true},
 		{"GZIP x-gtar", "application/x-gtar", true},
-		
-		// ZSTD formats
-		{"ZSTD x-zstd", "application/x-zstd", true},
-		{"ZSTD zstd", "application/zstd", true},
-		{"ZSTD x-zstandard", "application/x-zstandard", true},
-		
+
 		// TAR formats
 		{"TAR x-tar", "application/x-tar", true},
 		{"TAR tar", "application/tar", true},
