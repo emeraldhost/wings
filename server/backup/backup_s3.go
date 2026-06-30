@@ -164,7 +164,7 @@ func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCal
 	
 	// CRITICAL: The reader provided here is ALREADY DECOMPRESSED by the server layer!
 	// The server's RestoreBackupWithContext method handles:
-	// 1. Format detection (gzip, zstd, etc.)
+	// 1. Format detection (gzip, etc.)
 	// 2. Decompression
 	// 3. Passing us the clean TAR stream
 	//

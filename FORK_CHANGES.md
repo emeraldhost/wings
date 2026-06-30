@@ -19,7 +19,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
   a `-` line is **upstream**.
 
 > ⚠️ The biggest divergence by far is the **backup subsystem** (~6 000+ lines): an
-> operation registry/queue, retry, WebSocket progress, multi-format compression and a
+> operation registry/queue, retry, WebSocket progress and a
 > heavily customized restore path. Upstream merges in `server/backup*`, `router/router_server_backup.go`,
 > `server/server.go` and `sftp/server.go` will almost always conflict — resolve by **keeping ours**
 > and grafting upstream's functional/security changes on top (that is exactly how v1.13.1 was merged).
@@ -39,7 +39,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 ### 1.2 Backup subsystem — the largest divergence
 
 > Upstream's backup path is small (`s.Backup(b)` / `s.RestoreBackup(b)` in a bare goroutine).
-> The fork replaced it with a queued, cancellable, progress-reporting, multi-format pipeline.
+> The fork replaced it with a queued, cancellable, progress-reporting pipeline.
 
 **Operation registry, queue, retry (server package)**
 
@@ -61,12 +61,12 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | `server/events.go` | New `BackupProgressEvent`, `DownloadProgressEvent`, `ActivityEvent`. **Frontend contract.** |
 | `server/activity.go` | New `ActivityFile{Downloaded,Compressed,Decompressed,Chmod}`; `SaveActivity` also publishes `ActivityEvent` over WS. |
 
-**Multi-format compression & checksums**
+**Compression & checksums**
 
 | Path | What |
 |------|------|
 | `server/backup/backup.go` | **SHA-256** checksums + `ChecksumType: "sha256"` (upstream uses **sha1**). ⚠️ **Protocol-facing** — a careless merge reverts to sha1 and breaks checksum compatibility with our Panel. `PathForLocalBackup()` helper. |
-| `server/backup/compression.go` | **Fork-new.** `CompressionRegistry` (gzip/zstd/tar/none) + `IsValidBackupContentType()` — used by the router content-type gate; without it the router won't compile. |
+| `server/backup/compression.go` | **Fork-new.** `CompressionRegistry` (gzip/tar/none) + `IsValidBackupContentType()` — used by the router content-type gate; without it the router won't compile. |
 | `server/backup/backup_local.go` | `foundPath` + extension-probing `LocateLocal` (`.tar.gz/.tar.zst/.tar`), auto-detecting `Restore`, `CleanupBackupFilesForServer`. |
 | `server/backup/backup_s3.go` | Two-phase backup reuse, success-flag cleanup (failed uploads kept for retry), orphaned-part logging, upload progress (`ProgressReader`/`ProgressTracker`), custom HTTP/1.1 transport, part-retry with 100MB memory-buffer threshold / 5GB cap, `Restore()` expects an **already-decompressed** tar stream. |
 | `server/filesystem/archive.go` | Archiver no longer skips directory entries → **empty directories are preserved** in archives. `createCompressor()` refactor. |
@@ -78,7 +78,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | Path | What |
 |------|------|
 | `router/router.go` | Fork-only routes `GET /backup/operations` and `DELETE /backup/:backup/cancel`. |
-| `router/router_server_backup.go` | `cancelServerBackup` + `getServerBackupOperations` (fork-only). `postServerBackup` / `postServerRestoreBackup` rewritten: 409 concurrency guards, registry queueing, timeouts, panic recovery, retry, S3 download progress, and content-type via `backup.IsValidBackupContentType` (gzip+zstd+tar) instead of upstream's gzip-only check. |
+| `router/router_server_backup.go` | `cancelServerBackup` + `getServerBackupOperations` (fork-only). `postServerBackup` / `postServerRestoreBackup` rewritten: 409 concurrency guards, registry queueing, timeouts, panic recovery, retry, S3 download progress, and content-type via `backup.IsValidBackupContentType` (gzip+tar) instead of upstream's gzip-only check. |
 
 ### 1.3 SFTP activity streaming
 
@@ -107,10 +107,9 @@ These sit on **different** values/fields than upstream; they will re-appear in a
 
 | Path | Fork value / field | Note |
 |------|--------------------|------|
-| `config/config.go` → `Backups.Format` | `"gzip"` (default) / `"zstd"` | Fork-only field. ⚠️ Currently largely **inert**: only the (unused) system-tar streamer reads it; the active Go archiver ignores it. |
 | `server/backup_operations.go` | `maxConcurrentBackups/Restores = 8`; cleanup ticker 5 min / op TTL 8 h; backup 6 h / restore 4 h timeouts | Fork-chosen capacity/timeouts. |
 | `server/backup_progress.go` | 250 ms throttle; S3 80/20 split; 1 MB chunking | Determines WS emission rate / S3 percentage curve. |
-| `server/backup/backup_s3.go` | per-part upload `Content-Type: application/octet-stream` (upstream `application/x-gzip`) | Because the fork supports multiple formats. Verify Panel/S3 presigned flow tolerates it. |
+| `server/backup/backup_s3.go` | per-part upload `Content-Type: application/octet-stream` (upstream `application/x-gzip`) | Fork choice. Verify the Panel/S3 presigned flow tolerates it. |
 
 ---
 
@@ -127,8 +126,6 @@ much as bugs/concerns in our own additions, worth fixing rather than defending o
 | **Backup cleanup scope** | `cleanupBackupFiles` (server.go) and `CleanupBackupFilesForServer` (backup_local.go) match backup files by **filename pattern only** and do **not** filter by the server's ID. Since the backup directory is shared, deleting one server can remove **other** servers' local backups. |
 | **`checksum_type` label** | `server/backup.go` emits `"sha256"` in most events but still `"sha1"` in the panel-notify-failure success branch. Reconcile the labels (actual algorithm is sha256). |
 | **`validateBackupContent`** | Fails a backup on any server-vs-archive file/dir count mismatch (can race a live server writing files), and computes a full SHA-256 over the **entire server tree and backup file** purely for a debug log line (perf cost on large servers). |
-| **ZSTD restore disabled** | `archive_restore.go` `CreateDecompressor` returns `"ZSTD compression is no longer supported"`; any older zstd backups hard-fail to restore despite zstd being a supported *backup* format elsewhere. Reconcile. |
-| **Dead code** | `server/filesystem/archive_system.go` (system `tar`/`zstd` shell-out helpers) has **zero callers**. Abandoned experiment; needs host `tar`/`zstd` + uses a hardcoded `/tmp` exclude file. |
 
 ---
 

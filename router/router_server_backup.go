@@ -364,7 +364,7 @@ func postServerRestoreBackup(c *gin.Context) {
 		// Accept empty content type (some S3 providers don't set it)
 	} else if !backup.IsValidBackupContentType(contentType) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error": "The provided backup link has an unsupported content type. \"" + contentType + "\" is not a supported backup format (gzip, zstd, or tar).",
+			"error": "The provided backup link has an unsupported content type. \"" + contentType + "\" is not a supported backup format (gzip or tar).",
 		})
 		return
 	}
@@ -729,7 +729,7 @@ func isAllowedBackupRestoreDestination(host string, addr netip.Addr) bool {
 
 // isSupportedBackupRestoreContentType reports whether the given Content-Type header
 // value is a gzip archive. The remote-restore handler itself relies on the broader
-// backup.IsValidBackupContentType (which also accepts the fork's zstd format); this
+// backup.IsValidBackupContentType (which also accepts tar/uncompressed uploads); this
 // helper is retained for parity with upstream and its security test coverage.
 func isSupportedBackupRestoreContentType(value string) bool {
 	mediaType, _, err := mime.ParseMediaType(value)

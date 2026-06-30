@@ -290,15 +290,6 @@ type Backups struct {
 	// Defaults to "best_speed" (level 1)
 	CompressionLevel string `default:"best_speed" yaml:"compression_level"`
 
-	// Format determines the compression format used for backups.
-	// Available options: "gzip" (default), "zstd"
-	//
-	// zstd provides better compression ratios and faster compression/decompression
-	// compared to gzip, while maintaining full backward compatibility.
-	//
-	// Defaults to "gzip" for backward compatibility
-	Format string `default:"gzip" yaml:"format"`
-
 	// RestoreHostAllowlist allows backup restore downloads to connect to otherwise blocked
 	// private/internal destinations. Entries may be hostnames, IP addresses, or CIDR ranges.
 	RestoreHostAllowlist []string `yaml:"restore_host_allowlist"`

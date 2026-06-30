@@ -59,7 +59,7 @@ func LocateLocal(client remote.Client, uuid string) (*LocalBackup, os.FileInfo, 
 	// BACKWARD COMPATIBILITY: Try other formats if current format not found
 	if os.IsNotExist(err) {
 		// Try all possible extensions for backward compatibility
-		possibleExtensions := []string{".tar.gz", ".tar.zst", ".tar"}
+		possibleExtensions := []string{".tar.gz", ".tar"}
 		baseDir := config.Get().System.BackupDirectory
 		
 		for _, ext := range possibleExtensions {
@@ -272,7 +272,7 @@ func CleanupBackupFilesForServer(serverID string) error {
 func isBackupFile(filename string) bool {
 	// Common backup file extensions
 	backupExtensions := []string{
-		".tar.gz", ".tar.zst", ".tar", ".gz", ".zst",
+		".tar.gz", ".tar", ".gz",
 	}
 	
 	lowerName := strings.ToLower(filename)
