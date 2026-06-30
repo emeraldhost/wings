@@ -53,4 +53,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
           body_path: ./RELEASE_CHANGELOG
           files: |
-            dist/*
+            dist/wings_linux_amd64
+            dist/wings_linux_arm64
