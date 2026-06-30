@@ -129,7 +129,6 @@ much as bugs/concerns in our own additions, worth fixing rather than defending o
 | **`validateBackupContent`** | Fails a backup on any server-vs-archive file/dir count mismatch (can race a live server writing files), and computes a full SHA-256 over the **entire server tree and backup file** purely for a debug log line (perf cost on large servers). |
 | **ZSTD restore disabled** | `archive_restore.go` `CreateDecompressor` returns `"ZSTD compression is no longer supported"`; any older zstd backups hard-fail to restore despite zstd being a supported *backup* format elsewhere. Reconcile. |
 | **Dead code** | `server/filesystem/archive_system.go` (system `tar`/`zstd` shell-out helpers) has **zero callers**. Abandoned experiment; needs host `tar`/`zstd` + uses a hardcoded `/tmp` exclude file. |
-| **Lost test** | `server/filesystem/archive_test.go` was rewritten and dropped upstream's `TestArchive_Stream` (archive-content listing). Consider restoring it alongside the fork tests. |
 
 ---
 
