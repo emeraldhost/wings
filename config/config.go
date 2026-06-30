@@ -352,6 +352,10 @@ type Backups struct {
 	//
 	// Defaults to "gzip" for backward compatibility
 	Format string `default:"gzip" yaml:"format"`
+
+	// RestoreHostAllowlist allows backup restore downloads to connect to otherwise blocked
+	// private/internal destinations. Entries may be hostnames, IP addresses, or CIDR ranges.
+	RestoreHostAllowlist []string `yaml:"restore_host_allowlist"`
 }
 
 type Transfers struct {

@@ -43,7 +43,10 @@ func NewLocal(client remote.Client, uuid string, ignore string) *LocalBackup {
 // ENHANCED: Now supports finding backups with different extensions (backward compatibility)
 func LocateLocal(client remote.Client, uuid string) (*LocalBackup, os.FileInfo, error) {
 	b := NewLocal(client, uuid, "")
-	
+	if err := b.validateIdentifier(); err != nil {
+		return nil, nil, err
+	}
+
 	// Try current config format first (new behavior)
 	st, err := os.Stat(b.Path())
 	if err == nil {
@@ -88,6 +91,9 @@ func (b *LocalBackup) Path() string {
 
 // Remove removes a backup from the system.
 func (b *LocalBackup) Remove() error {
+	if err := b.validateIdentifier(); err != nil {
+		return err
+	}
 	return os.Remove(b.Path())
 }
 
@@ -99,6 +105,9 @@ func (b *LocalBackup) WithLogContext(c map[string]interface{}) {
 // Generate generates a backup of the selected files and pushes it to the
 // defined location for this instance.
 func (b *LocalBackup) Generate(ctx context.Context, fsys *filesystem.Filesystem, ignore string) (*ArchiveDetails, error) {
+	if err := b.validateIdentifier(); err != nil {
+		return nil, err
+	}
 	a := &filesystem.Archive{
 		Filesystem: fsys,
 		Ignore:     ignore,
@@ -120,6 +129,9 @@ func (b *LocalBackup) Generate(ctx context.Context, fsys *filesystem.Filesystem,
 // Restore will walk over the archive and call the callback function for each
 // file encountered.
 func (b *LocalBackup) Restore(ctx context.Context, _ io.Reader, callback RestoreCallback) error {
+	if err := b.validateIdentifier(); err != nil {
+		return err
+	}
 	f, err := os.Open(b.Path())
 	if err != nil {
 		return err

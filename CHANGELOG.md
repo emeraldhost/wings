@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.13.1
+### Security
+* Backup restore downloads are now hardened against SSRF: remote restore links are validated and may not resolve to private, loopback, link-local or other blocked address ranges unless permitted via the new `restore_host_allowlist` config option.
+* Backup identifiers are now strictly validated as UUIDs, preventing path traversal in backup paths and operations.
+* Hardening fixes merged from upstream security advisories (filesystem quota, disk space and SFTP handling).
+
+### Added
+* `system.backups.restore_host_allowlist` to allow backup restore downloads to reach otherwise blocked private/internal destinations.
+
+### Fixed
+* Improved quota, server, registry, filesystem and backup handling (upstream v1.13.1).
+
 ## v1.13.0
 ### Fixed
 * Empty folders in uploaded artifacts are now preserved ([#325](https://github.com/pterodactyl/wings/pull/325))
