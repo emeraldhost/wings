@@ -1,0 +1,130 @@
+name: Build Binary
+
+# Two ways in:
+#
+#   1. Called by release.yaml as a reusable workflow, right after the draft
+#      release was opened. This is the automatic path, and it runs in the SAME
+#      workflow run — which is what makes it work at all: a release published
+#      with GITHUB_TOKEN does NOT trigger new workflow runs, so an `on: release`
+#      listener would silently never fire.
+#
+#   2. A manual dispatch, to check that a build still works without touching any
+#      release. On that path `inputs` is empty, every `inputs.*` reference below
+#      evaluates to '' rather than erroring, and the binaries are kept as run
+#      artifacts instead of being attached anywhere.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA (or ref) to build. Defaults to the caller's ref.
+        type: string
+        required: false
+        default: ''
+      release-tag:
+        description: >-
+          Tag of an existing — possibly draft — GitHub Release to attach the
+          binaries and SHA256SUMS to. Empty means build and smoke-test only.
+        type: string
+        required: false
+        default: ''
+      version:
+        description: >-
+          Version to compile in, without a leading `v` (e.g. 1.13.2). Asserted
+          against what the built binary reports.
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binary:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          # Empty on dispatch, which makes actions/checkout fall back to its own
+          # default (the triggering ref and github.sha).
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: 1.24.11
+
+      - name: Resolve the version
+        id: resolve
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # A dispatch build carries no version; label it by commit so a stray
+          # binary can never claim to be a release.
+          if [ -z "$VERSION" ]; then
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binaries
+        env:
+          CGO_ENABLED: 0
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            GOARCH="$arch" go build \
+              -o "dist/wings_linux_${arch}" \
+              -v -trimpath \
+              -ldflags="-s -w -X github.com/Rene-Roscher/wings/system.Version=${VERSION}" \
+              github.com/Rene-Roscher/wings
+            chmod 755 "dist/wings_linux_${arch}"
+          done
+
+      # Catches a broken ldflags path silently producing a binary that reports
+      # "develop" — which would otherwise only surface on a node, after release.
+      - name: Assert the binary reports the version it was built with
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          reported="$(./dist/wings_linux_amd64 version | head -n1)"
+          echo "$reported"
+          printf '%s' "$reported" | grep -qF "wings v${VERSION}" || {
+            echo "::error::binary reports '${reported}', expected 'wings v${VERSION}'"
+            exit 1
+          }
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum wings_linux_amd64 wings_linux_arm64 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach the assets to the release
+        if: inputs.release-tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release-tag }}
+        run: |
+          set -euo pipefail
+          # --clobber so that re-running a failed run replaces partial uploads
+          # instead of failing on "asset already exists".
+          gh release upload "$TAG" \
+            dist/wings_linux_amd64 \
+            dist/wings_linux_arm64 \
+            dist/SHA256SUMS \
+            --clobber
+
+      - name: Upload the binaries as run artifacts
+        if: inputs.release-tag == ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: wings-binaries
+          path: dist/

@@ -1,57 +1,278 @@
 name: Release
+
+# Automatic releases. The version is never ours to choose: it is always the
+# version of the upstream pterodactyl/wings release that `develop` contains.
+#
+#   push to develop
+#     └─ prepare  resolves the newest upstream tag that is an ancestor of develop,
+#                 refuses to continue without a matching CHANGELOG.md section,
+#                 and opens a DRAFT release
+#          ├─ binary.yaml  builds linux amd64/arm64 + SHA256SUMS onto the draft
+#          ├─ docker.yaml  builds and pushes the versioned image
+#          └─ publish      verifies the assets, moves :latest by digest, un-drafts
+#
+# Why draft-until-verified: nodes resolve GET /releases/latest and the :latest
+# image. GitHub excludes drafts from /releases/latest, so a failure anywhere
+# before `publish` leaves both pointing at the previous release rather than at a
+# half-built one. Nothing becomes visible until the final job.
+#
+# Why binary/docker are `uses:` jobs in THIS run rather than `on: release`
+# listeners: a release published with GITHUB_TOKEN does not trigger new workflow
+# runs. docker.yaml used to listen on `release: published`, which only ever
+# worked because a human clicked Publish. Automating that click without this
+# change would have silently stopped every image build.
+#
+# NOTE: pushing a `v*` tag by hand no longer releases anything. Releases are cut
+# from develop, by this workflow, and nowhere else.
+#
+# RECOVERY: a failed run leaves a DRAFT release behind. `prepare` treats an
+# existing draft as "resume", so "Re-run failed jobs" on the original run picks
+# up where it failed. Only a PUBLISHED release blocks a new run, which is why a
+# fresh push to develop will not quietly re-cut a release that already shipped.
+#
+# RE-RELEASING a version: run this workflow manually with `force: true`. It
+# deletes the published release AND its tag, then cuts the version again from
+# the current develop. Deleting a release by hand does NOT re-trigger anything —
+# that is deliberate, so an accidental deletion cannot resurrect itself with
+# whatever happens to be on develop at the time.
+
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Re-release the version even if it is already published (deletes the existing release and its tag)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Release
+  prepare:
+    name: Prepare release
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      version: ${{ steps.upstream.outputs.version }}
+      tag: ${{ steps.upstream.outputs.tag }}
+      sha: ${{ github.sha }}
     steps:
       - name: Code checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: 1.24.11
+          # Ancestry checks need the whole history, not the default shallow clone.
+          fetch-depth: 0
 
-      - name: Build release binaries
-        env:
-          CGO_ENABLED: 0
+      - name: Resolve the upstream version contained in develop
+        id: upstream
         run: |
-          GOARCH=amd64 go build -o dist/wings_linux_amd64 -v -trimpath -ldflags="-s -w -X github.com/Rene-Roscher/wings/system.Version=${{ github.ref_name }}" github.com/Rene-Roscher/wings
-          chmod 755 dist/wings_linux_amd64
-          GOARCH=arm64 go build -o dist/wings_linux_arm64 -v -trimpath -ldflags="-s -w -X github.com/Rene-Roscher/wings/system.Version=${{ github.ref_name }}" github.com/Rene-Roscher/wings
-          chmod 755 dist/wings_linux_arm64
+          set -euo pipefail
+          git remote add upstream https://github.com/pterodactyl/wings.git
+          # Fetched into a private namespace on purpose: our fork carries tags
+          # with the SAME names pointing at our own merge commits (our v1.13.1
+          # is f7ba42d, upstream's is e771816), so a plain `fetch --tags` is
+          # rejected as "would clobber existing tag".
+          git fetch --quiet upstream 'refs/tags/v*:refs/upstream-tags/v*'
 
-      - name: Create release branch
+          best=""
+          while read -r ref; do
+            version="${ref#refs/upstream-tags/v}"
+            # Upstream tags release candidates too (v1.11.0-rc.1). We only ever
+            # ship stable versions.
+            case "$version" in *-*) continue ;; esac
+            # `^{commit}` dereferences annotated tags to the commit they point at.
+            git merge-base --is-ancestor "$(git rev-parse "${ref}^{commit}")" HEAD || continue
+            if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$version" | sort -V | tail -n1)" = "$version" ]; then
+              best="$version"
+            fi
+          done < <(git for-each-ref --format='%(refname)' 'refs/upstream-tags/v*')
+
+          if [ -z "$best" ]; then
+            echo "::error::no stable upstream tag is an ancestor of develop — cannot determine a version"
+            exit 1
+          fi
+
+          echo "develop contains upstream v${best}"
+          echo "version=${best}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${best}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to release
+        id: decide
         env:
-          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          FORCE: ${{ inputs.force }}
         run: |
-          BRANCH=release/${{ env.VERSION }}
-          git config --local user.email "ci@pterodactyl.io"
-          git config --local user.name "Pterodactyl CI"
-          git checkout -b $BRANCH
-          git push -u origin $BRANCH
-          sed -i "s/var Version = \".*\"/var Version = \"${VERSION:1}\"/" system/const.go
-          git add system/const.go
-          git commit -m "ci(release): bump version"
-          git push
+          set -euo pipefail
+          state="$(gh release view "$TAG" --json isDraft \
+                     --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo none)"
 
-      - name: write changelog
-        run: |
-          sed -n "/^## ${{ github.ref_name }}/,/^## /{/^## /b;p}" CHANGELOG.md > ./RELEASE_CHANGELOG
+          if [ "$FORCE" = "true" ] && [ "$state" != "none" ]; then
+            echo "::warning::${TAG} already exists (${state}) — force re-release requested, deleting it"
+            gh release delete "$TAG" --yes --cleanup-tag
+            state=none
+          fi
 
-      - uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+          case "$state" in
+            none)
+              echo "no release for ${TAG} yet — cutting it"
+              ;;
+            draft)
+              echo "a draft for ${TAG} exists — resuming it"
+              ;;
+            published)
+              echo "${TAG} is already published — nothing to do"
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              {
+                echo "### No release needed"
+                echo ""
+                echo "develop is on upstream \`${TAG}\`, which is already published."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the release notes
+        if: steps.decide.outputs.should_release == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Everything between this version's heading and the next one. The `$`
+          # anchor matters: without it `## v1.13.2` also matches `## v1.13.20`.
+          sed -n "/^## ${TAG}\$/,/^## /{/^## /b;p}" CHANGELOG.md > RELEASE_CHANGELOG
+          if ! grep -q '[^[:space:]]' RELEASE_CHANGELOG; then
+            echo "::error::CHANGELOG.md has no '## ${TAG}' section — refusing to publish a release with empty notes"
+            exit 1
+          fi
+          cat RELEASE_CHANGELOG
+
+      - name: Open the draft release
+        if: steps.decide.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # No git tag is created here. A draft only records tag_name and
+          # target_commitish; GitHub creates the tag when the release is
+          # published. That keeps an aborted run from leaving a tag behind.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file RELEASE_CHANGELOG --target "$SHA"
+          else
+            gh release create "$TAG" --draft --title "$TAG" --notes-file RELEASE_CHANGELOG --target "$SHA"
+          fi
+          {
+            echo "### Draft ${TAG} opened"
+            echo ""
+            echo "Building the binaries and the image now. The release is published"
+            echo "once both are attached and verified."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  binary:
+    name: Binary
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    uses: ./.github/workflows/binary.yaml
+    permissions:
+      contents: write
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      release-tag: ${{ needs.prepare.outputs.tag }}
+      version: ${{ needs.prepare.outputs.version }}
+
+  image:
+    name: Image
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    uses: ./.github/workflows/docker.yaml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+
+  # Runs only once BOTH the binaries and the image succeeded. This is the single
+  # point where anything becomes visible: :latest moves and the release leaves
+  # draft state. Until then a failure anywhere leaves the previous release and
+  # the previous :latest completely untouched.
+  publish:
+    name: Publish release
+    needs: [prepare, binary, image]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
-          draft: true
-          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
-          body_path: ./RELEASE_CHANGELOG
-          files: |
-            dist/wings_linux_amd64
-            dist/wings_linux_arm64
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify first: read-only, cheap, and independent of the retag. Doing it
+      # before anything moves means the only thing that can fail after :latest
+      # has moved is a single idempotent call, which a re-run repairs.
+      - name: Verify the release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          names="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          echo "attached assets:"; echo "$names"
+          for asset in wings_linux_amd64 wings_linux_arm64 SHA256SUMS; do
+            printf '%s\n' "$names" | grep -qxF "$asset" || {
+              echo "::error::release ${TAG} is missing asset '${asset}' — refusing to publish"
+              exit 1
+            }
+          done
+
+      # Retag by digest — no rebuild, and it cannot accidentally point at a
+      # different image than the one the `image` job just verified. The previous
+      # digest is logged so a manual rollback needs no archaeology.
+      - name: Move :latest to the verified release image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST" || { echo "::error::image job produced no digest"; exit 1; }
+          echo "previous :latest -> $(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${IMAGE}:latest" 2>/dev/null || echo '(none)')"
+          docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+          echo ":latest -> ${DIGEST}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Publishing is what finally creates the git tag, at the draft's
+          # target_commitish.
+          gh release edit "$TAG" --draft=false --latest
+          {
+            echo "### Published ${TAG}"
+            echo ""
+            echo "- Binaries: \`wings_linux_amd64\`, \`wings_linux_arm64\`, \`SHA256SUMS\`"
+            echo "- Image: \`ghcr.io/${{ github.repository }}:${VERSION}\` (also \`:${TAG}\` and \`:latest\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
