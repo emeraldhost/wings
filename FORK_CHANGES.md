@@ -4,8 +4,8 @@ This file tracks **which changes are our own** (EmeraldHost-specific) versus ups
 [`pterodactyl/wings`](https://github.com/pterodactyl/wings). Use it during upgrades so
 our customizations are **not accidentally reverted** when pulling in upstream changes.
 
-- **Baseline for this comparison:** upstream tag **`v1.13.1`** (`e771816`)
-- **Last reviewed:** 2026-06-30
+- **Baseline for this comparison:** upstream tag **`v1.13.2`** (`28af6dd`)
+- **Last reviewed:** 2026-08-03
 - **Module path:** this fork is `github.com/Rene-Roscher/wings` (upstream is
   `github.com/pterodactyl/wings`). Version is injected at build time via ldflags
   (`-X .../system.Version=<tag>`); `system/const.go` stays `develop` and is **not** a divergence.
@@ -23,6 +23,9 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 > heavily customized restore path. Upstream merges in `server/backup*`, `router/router_server_backup.go`,
 > `server/server.go` and `sftp/server.go` will almost always conflict — resolve by **keeping ours**
 > and grafting upstream's functional/security changes on top (that is exactly how v1.13.1 was merged).
+>
+> v1.13.2 was the exception: it only touched `router/tokens/**` plus three call sites and merged
+> without a single conflict — see §4.
 
 ---
 
@@ -72,6 +75,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | `server/filesystem/archive.go` | Archiver no longer skips directory entries → **empty directories are preserved** in archives. `createCompressor()` refactor. |
 | `server/filesystem/archive_restore.go` | **Fork-new.** `DetectCompressionFormat` (magic bytes) + `CreateDecompressor`, wired into restore. |
 | `server/filesystem/compress_binary_test.go`, `server/backup/*_test.go`, `router/content_type_test.go`, `server/backup_*_test.go` | Fork-new regression suites for the above. Keep them passing. |
+| `server/filesystem/archive_test.go` + `archive_stream_test.go` | **File layout divergence, not new behavior.** Our `archive_test.go` was replaced wholesale with tests for the fork-only `archive_restore.go`; upstream's `TestArchive_Stream` lives in `archive_stream_test.go` instead. Upstream edits to `archive_test.go` therefore land in the *wrong* file on merge — port them into `archive_stream_test.go` by hand. |
 
 **Router API (fork-only endpoints + customized handlers)**
 
@@ -131,14 +135,24 @@ much as bugs/concerns in our own additions, worth fixing rather than defending o
 
 ## 4. NOT fork divergences — adopted from upstream (do **not** re-apply)
 
-These show up around our customizations but are **upstream v1.13.1** code. Treating them as
+These show up around our customizations but are **upstream** code. Treating them as
 fork changes risks duplicating or mis-merging them on the next upgrade.
 
 | Path | Reality |
 |------|---------|
+| `router/tokens/websocket.go` → `isDenylisted()`, and `Denylisted()` on `FilePayload` / `BackupPayload` / `UploadPayload` (+ their new `user_uuid` claim) | **Upstream v1.13.2** (`28af6dd`, "update token validation"). Revocation checking was extracted out of `WebsocketPayload.Denylisted()` into a shared `isDenylisted()` and applied to the backup-download, file-download and file-upload one-time tokens, which previously only checked `IsUniqueRequest()`/scope. Also tightened `Before(t)` → `!After(t)`, so a token issued in the same second as the revocation is now denied. All four files are byte-identical to upstream — **keep them that way**. |
+| `router/tokens/denylist_test.go` | **Upstream v1.13.2**, unmodified. Covers the four payload types above. Not a fork suite. |
+| `router/router_download.go`, `router/router_server_files.go` → the `token.Denylisted() \|\|` guards | **Upstream v1.13.2** call sites. The surrounding files *are* fork-modified (module rename + activity logging), so these three one-liners are easy to lose in a conflict resolution — check they survive. |
 | `router/router_server_backup.go` SSRF cluster — `backupRestoreHttpClient`, `validateBackupDownloadUrl`, `parseBackupUuid`, `isBlockedBackupRestoreIP`, `isExplicitlyBlockedBackupRestoreIP`, `isAllowedBackupRestoreDestination`, `isSupportedBackupRestoreContentType`, `blockedBackupRestorePrefixes`, `backupDownloadError` | **Upstream v1.13.1** backup-restore SSRF hardening. The **only** fork edit in this cluster: the restore handler calls `backup.IsValidBackupContentType` instead of `isSupportedBackupRestoreContentType` (the latter is retained only for upstream parity + its test). |
 | `config/config.go` → `Backups.RestoreHostAllowlist` | **Upstream v1.13.1.** Pairs with the SSRF allowlist above. Not a fork field. |
 | `server/backup/backup.go` → `validateIdentifier()` / `normalizedIdentifier()` (+ `Path()` `path.Base` fallback) | **Upstream v1.13.1** UUID hardening. The fork uses them unchanged. |
 | `system/const.go` | Byte-identical to upstream (`Version = "develop"`). |
-| `.github/FUNDING.yaml` (`github: [pterodactyl]`) | **Upstream default, unchanged** (`git diff e771816 HEAD` is empty). Stale for a fork (sponsorship points at upstream) but NOT our change — clean it up if desired, don't track it as a divergence. |
+| `.github/FUNDING.yaml` (`github: [pterodactyl]`) | **Upstream default, unchanged** (`git diff 28af6dd HEAD` is empty). Stale for a fork (sponsorship points at upstream) but NOT our change — clean it up if desired, don't track it as a divergence. |
 | `.github/workflows/release.yaml` release-bot identity (`ci@pterodactyl.io` / `Pterodactyl CI`) | **Upstream default, unchanged.** Upstream's release.yaml already sets this identity. Not our divergence. |
+
+> ⚠️ **Panel coupling introduced by v1.13.2.** `isDenylisted()` **fails closed**: a token with no
+> `iat`, no `server_uuid` or no `user_uuid` is rejected outright. The `user_uuid` claim is new in
+> v1.13.2, so backup downloads, file downloads and file uploads only work against a Panel that
+> puts `user_uuid` into those JWTs. Against an older Panel every such request returns
+> `404 "The requested resource was not found on this server."` — deploy Panel **before** Wings,
+> and if downloads/uploads start 404-ing after a Wings upgrade, this is the first thing to check.
