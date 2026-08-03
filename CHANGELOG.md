@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.13.2
+### Security
+* Backup download, file download and file upload tokens are now checked against the revocation denylist. Previously only websocket tokens were, so revoking a user's access to a server left already-issued download and upload links working until they expired.
+* Tokens that are missing the claims needed for that check (`iat`, `server_uuid`, `user_uuid`) are now rejected outright instead of being accepted.
+
+### Changed
+* Backup downloads, file downloads and file uploads now require a Panel that sends the new `user_uuid` claim in those tokens. **Update the Panel before Wings** — against an older Panel these requests return `404`.
+
 ## v1.13.1
 ### Security
 * Backup restore downloads are now hardened against SSRF: remote restore links are validated and may not resolve to private, loopback, link-local or other blocked address ranges unless permitted via the new `restore_host_allowlist` config option.

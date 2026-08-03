@@ -100,7 +100,8 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | Path | What |
 |------|------|
 | `.gitignore` | Fork-added `.claude-flow/`, `.hive-mind/`, `CLAUDE.md`. Upstream will never add these — keep on merge. |
-| `.github/workflows/**`, `Makefile`, `Dockerfile` | Our build/release pipeline (with the renamed module path). |
+| `Makefile`, `Dockerfile` | Our build settings (with the renamed module path). |
+| `.github/workflows/{release,binary,docker}.yaml` | **Fork-specific release pipeline — always keep ours.** Upstream releases by hand: a human pushes a `v*` tag, `release.yaml` cuts a draft, a human publishes it. We release automatically from `develop` instead, and the version is derived from the newest **upstream** tag that is an ancestor of `develop` — so our releases always carry the upstream version number. Upstream's `release.yaml` has diverged beyond recognition; do not merge it. See the header comment in `release.yaml` for the full flow and recovery steps. |
 
 ---
 
