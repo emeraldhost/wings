@@ -20,6 +20,7 @@ import (
 
 	"github.com/Rene-Roscher/wings/config"
 	"github.com/Rene-Roscher/wings/environment"
+	"github.com/Rene-Roscher/wings/environment/docker"
 	"github.com/Rene-Roscher/wings/remote"
 	"github.com/Rene-Roscher/wings/system"
 )
@@ -485,6 +486,8 @@ func (ip *InstallationProcess) Execute() (string, error) {
 	if err := ip.client.ContainerStart(ctx, r.ID, container.StartOptions{}); err != nil {
 		return "", err
 	}
+
+	docker.SetCpuBurst(ctx, ip.client, r.ID, hostConf.Resources.CPUQuota)
 
 	// Process the install event in the background by listening to the stream output until the
 	// container has stopped, at which point we'll disconnect from it.
