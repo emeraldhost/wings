@@ -4,8 +4,8 @@ This file tracks **which changes are our own** (EmeraldHost-specific) versus ups
 [`pterodactyl/wings`](https://github.com/pterodactyl/wings). Use it during upgrades so
 our customizations are **not accidentally reverted** when pulling in upstream changes.
 
-- **Baseline for this comparison:** upstream tag **`v1.13.2`** (`28af6dd`)
-- **Last reviewed:** 2026-08-03
+- **Baseline for this comparison:** upstream tag **`v1.13.3`** (`6987d5e`)
+- **Last reviewed:** 2026-08-14
 - **Module path:** this fork is `github.com/Rene-Roscher/wings` (upstream is
   `github.com/pterodactyl/wings`). Version is injected at build time via ldflags
   (`-X .../system.Version=<tag>`); `system/const.go` stays `develop` and is **not** a divergence.
@@ -24,8 +24,9 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 > `server/server.go` and `sftp/server.go` will almost always conflict — resolve by **keeping ours**
 > and grafting upstream's functional/security changes on top (that is exactly how v1.13.1 was merged).
 >
-> v1.13.2 was the exception: it only touched `router/tokens/**` plus three call sites and merged
-> without a single conflict — see §4.
+> v1.13.2 and v1.13.3 were exceptions: both stayed clear of the backup subsystem and merged
+> (nearly) conflict-free — see §4. The v1.13.3 conflicts were only our rewritten
+> `release.yaml` (keep ours, see §1.4) and the module-renamed import block of `server/install.go`.
 
 ---
 
@@ -101,7 +102,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 |------|------|
 | `.gitignore` | Fork-added `.claude-flow/`, `.hive-mind/`, `CLAUDE.md`. Upstream will never add these — keep on merge. |
 | `Makefile`, `Dockerfile` | Our build settings (with the renamed module path). |
-| `.github/workflows/{release,binary,docker}.yaml` | **Fork-specific release pipeline — always keep ours.** Upstream releases by hand: a human pushes a `v*` tag, `release.yaml` cuts a draft, a human publishes it. We release automatically from `develop` instead, and the version is derived from the newest **upstream** tag that is an ancestor of `develop` — so our releases always carry the upstream version number. Upstream's `release.yaml` has diverged beyond recognition; do not merge it. See the header comment in `release.yaml` for the full flow and recovery steps. |
+| `.github/workflows/{release,binary,docker}.yaml` | **Fork-specific release pipeline — always keep ours.** Upstream releases by hand: a human pushes a `v*` tag, `release.yaml` cuts a draft, a human publishes it. We release automatically from `develop` instead, and the version is derived from the newest **upstream** tag that is an ancestor of `develop` — so our releases always carry the upstream version number. Upstream's `release.yaml` has diverged beyond recognition; do not merge it (v1.13.3's `c57c519` CDN-manifest notification was deliberately dropped — it notifies pterodactyl's own CDN repo). See the header comment in `release.yaml` for the full flow and recovery steps. |
 
 ---
 
@@ -141,6 +142,10 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 
 | Path | Reality |
 |------|---------|
+| `config/config.go` → `ResolveToken(remote bool)`; `remote/http.go` → `Client.SetCredentials()` + mutex-guarded credentials; `router/router_system.go` → token re-resolve/empty-token guard/credential rotation in `postUpdateConfiguration` | **Upstream v1.13.3** master-key-rotation cluster (`07ce5fe`, `392e52c`, `3e6c2c9`): Panel-sent master key resets now propagate to the running daemon, with remote token values barred from `file://`/`$VAR` indirection and checked against `WINGS_TOKEN_ID`/`WINGS_TOKEN` overrides. Fork edit: module rename only. |
+| `sftp/handler.go` → `setstatMode()` + `sftpAttributeExtended` rejection | **Upstream v1.13.3** (`da1a216`) hardening against unbounded allocations from crafted setstat packets. The fork's `publisher` wiring in `NewHandler` sits in the same file — both must survive a merge. |
+| `environment/docker/cgroup_burst.go` (+ test), `applyCpuBurst`/`clearCpuBurst`/`SetCpuBurst` call sites in `container.go`/`power.go`/`server/install.go`, `config_docker.go` → `CpuPeriod`/`CpuBurst`/`CpuShares`, `environment/settings.go` quota math | **Upstream v1.13.3** CPU allocation work (`2cc8a10`, `6987d5e`). Not fork code — only the imports in the new files were renamed to `Rene-Roscher` (they arrive `pterodactyl` on every upstream merge; grep for leaks). |
+| `config/config_token_test.go`, `remote/http_test.go`, `router/router_system_test.go`, `environment/docker/cgroup_burst_test.go`, `config/config_docker_test.go`, upstream additions in `sftp/handler_test.go` | **Upstream v1.13.3** suites, module rename only. Not fork suites. |
 | `router/tokens/websocket.go` → `isDenylisted()`, and `Denylisted()` on `FilePayload` / `BackupPayload` / `UploadPayload` (+ their new `user_uuid` claim) | **Upstream v1.13.2** (`28af6dd`, "update token validation"). Revocation checking was extracted out of `WebsocketPayload.Denylisted()` into a shared `isDenylisted()` and applied to the backup-download, file-download and file-upload one-time tokens, which previously only checked `IsUniqueRequest()`/scope. Also tightened `Before(t)` → `!After(t)`, so a token issued in the same second as the revocation is now denied. All four files are byte-identical to upstream — **keep them that way**. |
 | `router/tokens/denylist_test.go` | **Upstream v1.13.2**, unmodified. Covers the four payload types above. Not a fork suite. |
 | `router/router_download.go`, `router/router_server_files.go` → the `token.Denylisted() \|\|` guards | **Upstream v1.13.2** call sites. The surrounding files *are* fork-modified (module rename + activity logging), so these three one-liners are easy to lose in a conflict resolution — check they survive. |
