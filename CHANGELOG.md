@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.13.3
+### Security
+* SFTP `setstat` requests carrying the extended-attribute flag are now rejected before parsing, preventing a small packet from requesting an effectively unbounded memory allocation.
+* Credential rotation is hardened: token values sent by the Panel may not use `file://` or `$VAR` indirection, and when `WINGS_TOKEN_ID`/`WINGS_TOKEN` environment overrides are set, a Panel-sent token that does not match them is rejected — so a configuration update can no longer leave Wings and the Panel using different keys.
+
+### Fixed
+* Master key resets through the Panel now propagate to the running daemon: applying a configuration update re-resolves the derived authentication token and rotates the Panel API client credentials, instead of using the boot-time token until the next restart. An update carrying an empty token is refused.
+* Log rotation now signals Wings through the wrapper, fixing rotation when Wings runs under a supervisor ([#336](https://github.com/pterodactyl/wings/pull/336)).
+* Reading a `file://` token source now surfaces the read error instead of silently yielding an empty token.
+
+### Added
+* `docker.cpu_period` — configurable CFS scheduling window (default 100000 µs, clamped to 1000–1000000).
+* `docker.cpu_burst.percent` — lets containers bank unused CFS quota within a period and spend it in bursts; applied on start, install and in-situ limit updates (cgroup v1 and v2).
+* `docker.cpu_shares` — relative CFS weight of server containers on a saturated host (default 0 = engine default; Wings historically hardcoded 1024, set that to restore the old bias towards host system services).
+
 ## v1.13.2
 ### Security
 * Backup download, file download and file upload tokens are now checked against the revocation denylist. Previously only websocket tokens were, so revoking a user's access to a server left already-issued download and upload links working until they expired.
