@@ -35,6 +35,11 @@ name: Release
 # the current develop. Deleting a release by hand does NOT re-trigger anything —
 # that is deliberate, so an accidental deletion cannot resurrect itself with
 # whatever happens to be on develop at the time.
+#
+# FORK-ONLY RELEASES: when we need to ship without an upstream bump, dispatch
+# with `fork_revision` (1, 2, ...). The version becomes <upstream>.<revision>,
+# e.g. v1.13.3.1 — upstream's number stays visible in front, and the release
+# sorts after v1.13.3. The automatic push path never does this on its own.
 
 on:
   push:
@@ -46,6 +51,10 @@ on:
         description: "Re-release the version even if it is already published (deletes the existing release and its tag)"
         type: boolean
         default: false
+      fork_revision:
+        description: "Fork-only release: append this revision to the upstream version (1 -> v1.13.3.1). Leave empty for a normal release."
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -73,6 +82,8 @@ jobs:
 
       - name: Resolve the upstream version contained in develop
         id: upstream
+        env:
+          FORK_REVISION: ${{ inputs.fork_revision }}
         run: |
           set -euo pipefail
           git remote add upstream https://github.com/pterodactyl/wings.git
@@ -100,9 +111,18 @@ jobs:
             exit 1
           fi
 
-          echo "develop contains upstream v${best}"
-          echo "version=${best}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${best}" >> "$GITHUB_OUTPUT"
+          version="$best"
+          if [ -n "$FORK_REVISION" ]; then
+            case "$FORK_REVISION" in
+              ''|*[!0-9]*|0*) echo "::error::fork_revision must be a positive integer, got '${FORK_REVISION}'"; exit 1 ;;
+            esac
+            version="${best}.${FORK_REVISION}"
+            echo "develop contains upstream v${best}; cutting fork revision v${version}"
+          else
+            echo "develop contains upstream v${best}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to release
         id: decide

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.13.3.1
+### Changed
+* Fork-only re-release of v1.13.3 under a new version number — no code changes; binaries and image are rebuilt from the same sources. First release cut through the new `fork_revision` dispatch path.
+
 ## v1.13.3
 ### Security
 * SFTP `setstat` requests carrying the extended-attribute flag are now rejected before parsing, preventing a small packet from requesting an effectively unbounded memory allocation.
