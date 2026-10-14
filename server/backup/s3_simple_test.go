@@ -35,24 +35,24 @@ func TestS3RestoreDirectoryHandling(t *testing.T) {
 	// Create test TAR data in memory (S3 Restore expects ALREADY DECOMPRESSED TAR stream)
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	
+
 	// Create test entries including the problematic cases
 	entries := []struct {
 		name    string
 		content string
 		isDir   bool
 	}{
-		{".", "", true},                         // Root directory (causes the original error)
-		{"empty_dir", "", true},                // Empty directory
-		{"test_dir", "", true},                 // Regular directory
-		{"file1.txt", "content1", false},       // Regular file
+		{".", "", true},                           // Root directory (causes the original error)
+		{"empty_dir", "", true},                   // Empty directory
+		{"test_dir", "", true},                    // Regular directory
+		{"file1.txt", "content1", false},          // Regular file
 		{"test_dir/file2.txt", "content2", false}, // Nested file
 	}
-	
+
 	// Write entries to TAR
 	for _, entry := range entries {
 		var header *tar.Header
-		
+
 		if entry.isDir {
 			header = &tar.Header{
 				Name:     entry.name,
@@ -69,9 +69,9 @@ func TestS3RestoreDirectoryHandling(t *testing.T) {
 				ModTime:  time.Now(),
 			}
 		}
-		
+
 		require.NoError(t, tw.WriteHeader(header))
-		
+
 		if !entry.isDir {
 			_, err := tw.Write([]byte(entry.content))
 			require.NoError(t, err)
@@ -87,26 +87,26 @@ func TestS3RestoreDirectoryHandling(t *testing.T) {
 			adapter: S3BackupAdapter,
 		},
 	}
-	
+
 	// Test restore with our fixed logic
 	ctx := context.Background()
 	restoreReader := bytes.NewReader(buf.Bytes())
-	
+
 	var processedEntries []string
 	var errorCount int
-	
+
 	err := s3backup.Restore(ctx, restoreReader, func(file string, info os.FileInfo, r io.ReadCloser) error {
 		defer r.Close()
-		
+
 		t.Logf("S3 processing entry: '%s' (isDir: %v, size: %d)", file, info.IsDir(), info.Size())
 		processedEntries = append(processedEntries, file)
-		
+
 		// Simulate the same logic as in server/backup.go restore callback
 		if file == "." || file == "" || file == "/" {
 			t.Logf("Correctly skipped problematic entry: '%s'", file)
 			return nil
 		}
-		
+
 		if info.IsDir() {
 			t.Logf("Would create directory: %s", file)
 		} else {
@@ -117,23 +117,23 @@ func TestS3RestoreDirectoryHandling(t *testing.T) {
 			}
 			t.Logf("Would write file: %s (%d bytes)", file, len(content))
 		}
-		
+
 		return nil
 	})
-	
+
 	require.NoError(t, err, "S3 restore should complete without errors")
 	assert.Equal(t, 0, errorCount, "Should have no processing errors")
-	
+
 	// Verify all entries were processed
 	assert.Len(t, processedEntries, 5, "Should process all 5 entries")
-	
+
 	// Verify specific entries
 	assert.Contains(t, processedEntries, ".", "Root directory should be processed (but skipped)")
 	assert.Contains(t, processedEntries, "empty_dir", "Empty directory should be processed")
 	assert.Contains(t, processedEntries, "test_dir", "Test directory should be processed")
 	assert.Contains(t, processedEntries, "file1.txt", "File1 should be processed")
 	assert.Contains(t, processedEntries, "test_dir/file2.txt", "Nested file should be processed")
-	
+
 	t.Logf("SUCCESS: S3 restore processed %d entries correctly", len(processedEntries))
 }
 
@@ -144,7 +144,7 @@ func TestS3RestoreCompressionDetection(t *testing.T) {
 		// Create simple TAR (decompression happens before S3 Restore is called)
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
-		
+
 		// Single test entry
 		header := &tar.Header{
 			Name:     "test.txt",
@@ -153,7 +153,7 @@ func TestS3RestoreCompressionDetection(t *testing.T) {
 			Typeflag: tar.TypeReg,
 			ModTime:  time.Now(),
 		}
-		
+
 		require.NoError(t, tw.WriteHeader(header))
 		_, err := tw.Write([]byte("test"))
 		require.NoError(t, err)
@@ -166,15 +166,15 @@ func TestS3RestoreCompressionDetection(t *testing.T) {
 				adapter: S3BackupAdapter,
 			},
 		}
-		
+
 		ctx := context.Background()
 		restoreReader := bytes.NewReader(buf.Bytes())
-		
+
 		var detectedContent string
-		
+
 		err = s3backup.Restore(ctx, restoreReader, func(file string, info os.FileInfo, r io.ReadCloser) error {
 			defer r.Close()
-			
+
 			if strings.HasSuffix(file, ".txt") {
 				content, err := io.ReadAll(r)
 				if err != nil {
@@ -182,10 +182,10 @@ func TestS3RestoreCompressionDetection(t *testing.T) {
 				}
 				detectedContent = string(content)
 			}
-			
+
 			return nil
 		})
-		
+
 		require.NoError(t, err, "S3 restore should handle TAR extraction")
 		assert.Equal(t, "test", detectedContent, "Content should be correctly extracted")
 

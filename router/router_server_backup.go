@@ -20,21 +20,15 @@ import (
 
 	"github.com/Rene-Roscher/wings/config"
 	"github.com/Rene-Roscher/wings/environment"
+	wnet "github.com/Rene-Roscher/wings/internal/network"
 	"github.com/Rene-Roscher/wings/router/middleware"
 	"github.com/Rene-Roscher/wings/server"
 	"github.com/Rene-Roscher/wings/server/backup"
+	"github.com/Rene-Roscher/wings/server/filesystem"
 )
 
 // isValidBackupContentType is now replaced by backup.IsValidBackupContentType
 // which uses the extensible CompressionRegistry for better format support
-
-// blockedBackupRestorePrefixes lists IP ranges that backup restore downloads are
-// never allowed to reach (in addition to private/loopback/link-local ranges),
-// unless a destination is explicitly permitted via the RestoreHostAllowlist.
-var blockedBackupRestorePrefixes = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-}
 
 // backupDownloadError is a sentinel error type used to surface backup download
 // validation failures (e.g. SSRF protection) back to the API caller as 400s.
@@ -83,6 +77,11 @@ func postServerBackup(c *gin.Context) {
 		return
 	}
 
+	if err := filesystem.ValidateIgnore(data.Ignore); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	var adapter backup.BackupInterface
 	switch data.Adapter {
 	case backup.LocalBackupAdapter:
@@ -115,23 +114,16 @@ func postServerBackup(c *gin.Context) {
 		// ATOMIC REGISTRATION: Register and get accurate queue status
 		registry := server.GetBackupOperationRegistry()
 		logger.Info("registering backup operation in queue system")
-		
+
 		// ATOMIC: Register operation and get queue status atomically
 		_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), backupUuid, s.ID(), server.OperationTypeBackup)
 		if err != nil {
 			logger.WithError(err).Error("failed to register backup operation")
-			s.Events().Publish(server.DaemonMessageEvent, "Failed to register backup: " + err.Error())
+			s.Events().Publish(server.DaemonMessageEvent, "Failed to register backup: "+err.Error())
 			return
 		}
-		
-		// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
-		if wasQueued {
-			s.Environment.SetState(environment.ProcessBackupQueuedState)
-			s.Events().Publish(server.DaemonMessageEvent, "Backup was queued and slot acquired - starting backup process...")
-		} else {
-			s.Events().Publish(server.DaemonMessageEvent, "Backup slot available - starting backup process immediately...")
-		}
-		// Defer cleanup - will run AFTER backup completes
+		// Defer cleanup immediately after a successful registration so that the
+		// registry slot is always released, even if anything below panics.
 		defer func() {
 			logger.Debug("backup goroutine cleanup starting")
 			registry.Complete(backupUuid)
@@ -139,13 +131,21 @@ func postServerBackup(c *gin.Context) {
 			logger.Debug("backup goroutine cleanup completed")
 		}()
 
+		// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
+		if wasQueued {
+			s.Environment.SetState(environment.ProcessBackupQueuedState)
+			s.Events().Publish(server.DaemonMessageEvent, "Backup was queued and slot acquired - starting backup process...")
+		} else {
+			s.Events().Publish(server.DaemonMessageEvent, "Backup slot available - starting backup process immediately...")
+		}
+
 		// Add timeout if not already set
 		ctx, timeoutCancel := context.WithTimeout(ctx, 6*time.Hour)
 		defer timeoutCancel()
 
 		if err := s.BackupWithRetry(ctx, b, 2); err != nil {
 			logger.WithField("error", errors.WithStackIf(err)).Error("router: failed to generate server backup after retries")
-			
+
 			// Send failure event to ensure frontend gets notified
 			s.Events().Publish(server.BackupCompletedEvent, map[string]any{
 				"uuid":          backupUuid,
@@ -167,8 +167,6 @@ func postServerBackup(c *gin.Context) {
 //
 // This endpoint will block until the backup is fully restored allowing for a
 // spinner to be displayed in the Panel UI effectively.
-//
-// TODO: stop the server if it is running
 func postServerRestoreBackup(c *gin.Context) {
 	s := middleware.ExtractServer(c)
 	client := middleware.ExtractApiClient(c)
@@ -223,16 +221,10 @@ func postServerRestoreBackup(c *gin.Context) {
 	// to prevent race conditions with the operation registry
 
 	logger.Info("processing server backup restore request")
-	if data.TruncateDirectory {
-		logger.Info("received \"truncate_directory\" flag in request: deleting server files")
-		if err := s.Filesystem().TruncateRootDirectory(); err != nil {
-			middleware.CaptureAndAbort(c, err)
-			return
-		}
-	}
 
-	// Now that we've cleaned up the data directory if necessary, grab the backup file
-	// and attempt to restore it into the server directory.
+	// Find the backup before changing anything, so that a restore that cannot
+	// happen leaves the server's files as they are. If the truncate_directory flag
+	// is set, the files are deleted once the server has stopped.
 	if data.Adapter == backup.LocalBackupAdapter {
 		b, _, err := backup.LocateLocal(client, backupUuid)
 		if err != nil {
@@ -240,25 +232,25 @@ func postServerRestoreBackup(c *gin.Context) {
 			return
 		}
 		go func(s *server.Server, b backup.BackupInterface, logger *log.Entry) {
+			// Never let a panic in this goroutine crash the daemon.
+			defer func() {
+				if r := recover(); r != nil {
+					logger.WithField("panic", r).Error("local restore goroutine panicked")
+				}
+			}()
 			// ATOMIC REGISTRATION: Register and get accurate queue status
 			registry := server.GetBackupOperationRegistry()
 			logger.Info("registering local restore operation in queue system")
-			
+
 			// ATOMIC: Register operation and get queue status atomically
 			_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), backupUuid, s.ID(), server.OperationTypeRestore)
 			if err != nil {
 				logger.WithError(err).Error("failed to register restore operation")
-				s.Events().Publish(server.DaemonMessageEvent, "Failed to register restore: " + err.Error())
+				s.Events().Publish(server.DaemonMessageEvent, "Failed to register restore: "+err.Error())
 				return
 			}
-			
-			// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
-			if wasQueued {
-				s.Environment.SetState(environment.ProcessRestoreQueuedState)
-				s.Events().Publish(server.DaemonMessageEvent, "Restore was queued and slot acquired - starting restore process...")
-			} else {
-				s.Events().Publish(server.DaemonMessageEvent, "Restore slot available - starting restore process immediately...")
-			}
+			// Defer cleanup immediately after a successful registration so that the
+			// registry slot is always released, even if anything below panics.
 			defer func() {
 				if r := recover(); r != nil {
 					logger.WithField("panic", r).Error("restore operation panicked")
@@ -270,21 +262,29 @@ func postServerRestoreBackup(c *gin.Context) {
 				// Note: SetRestoring is now handled atomically within the restore function
 			}()
 
+			// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
+			if wasQueued {
+				s.Environment.SetState(environment.ProcessRestoreQueuedState)
+				s.Events().Publish(server.DaemonMessageEvent, "Restore was queued and slot acquired - starting restore process...")
+			} else {
+				s.Events().Publish(server.DaemonMessageEvent, "Restore slot available - starting restore process immediately...")
+			}
+
 			// Add 4-hour timeout for restore operations
 			ctx, timeoutCancel := context.WithTimeout(ctx, 4*time.Hour)
 			defer timeoutCancel()
 
 			logger.Info("starting restoration process for server backup using local driver")
-			if err := s.RestoreBackupWithContext(ctx, b, nil); err != nil {
+			if err := s.RestoreBackupWithContext(ctx, b, nil, data.TruncateDirectory); err != nil {
 				logger.WithField("error", err).Error("failed to restore local backup to server")
-				s.Events().Publish(server.DaemonMessageEvent, "Failed server restoration from local backup: " + err.Error())
+				s.Events().Publish(server.DaemonMessageEvent, "Failed server restoration from local backup: "+err.Error())
 				// BackupRestoreCompletedEvent is now sent by RestoreBackupWithContext
 			} else {
 				logger.WithFields(log.Fields{
 					"is_restoring": s.IsRestoring(),
 					"server_state": s.Environment.State(),
 				}).Info("Local restore completed successfully")
-				
+
 				s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from local backup.")
 				// BackupRestoreCompletedEvent is now sent by RestoreBackupWithContext
 				logger.Info("completed server restoration from local backup")
@@ -299,26 +299,29 @@ func postServerRestoreBackup(c *gin.Context) {
 	// parse over the contents as we go in order to restore it to the server.
 	//
 	// backupRestoreHttpClient enforces SSRF protections: it refuses to connect to
-	// private/internal/loopback addresses (and the explicitly blocked ranges) unless
+	// private/internal/loopback addresses (see internal/network) unless
 	// the destination is permitted via the RestoreHostAllowlist configuration option.
 	httpClient := backupRestoreHttpClient()
-	logger.WithField("download_url", data.DownloadUrl).Info("downloading backup from remote location...")
-	// Use proper timeout to prevent indefinite hangs during backup downloads.
-	// 2 hour timeout should be sufficient for most backup file sizes while preventing
-	// resource exhaustion from stuck connections.
+	// Only log the host: the download URL is presigned and its query string
+	// carries the signature.
+	downloadHost := ""
+	if u, err := url.Parse(data.DownloadUrl); err == nil {
+		downloadHost = u.Host
+	}
+	logger.WithField("download_host", downloadHost).Info("downloading backup from remote location...")
 	req, err := http.NewRequestWithContext(s.Context(), http.MethodGet, data.DownloadUrl, nil)
 	if err != nil {
 		logger.WithField("error", err).Error("failed to create HTTP request for backup download")
 		middleware.CaptureAndAbort(c, err)
 		return
 	}
-	
+
 	logger.Debug("executing HTTP request for backup download")
 	downloadStart := time.Now()
 	res, err := httpClient.Do(req)
 	if err != nil {
 		logger.WithFields(log.Fields{
-			"error": err,
+			"error":       err,
 			"duration_ms": time.Since(downloadStart).Milliseconds(),
 		}).Error("HTTP request failed for backup download")
 		// Surface SSRF/validation failures from the restore HTTP client as a 400
@@ -331,14 +334,14 @@ func postServerRestoreBackup(c *gin.Context) {
 		middleware.CaptureAndAbort(c, err)
 		return
 	}
-	
+
 	logger.WithFields(log.Fields{
-		"status_code": res.StatusCode,
+		"status_code":    res.StatusCode,
 		"content_length": res.ContentLength,
-		"content_type": res.Header.Get("Content-Type"),
-		"duration_ms": time.Since(downloadStart).Milliseconds(),
+		"content_type":   res.Header.Get("Content-Type"),
+		"duration_ms":    time.Since(downloadStart).Milliseconds(),
 	}).Info("received HTTP response for backup download")
-	
+
 	// CRITICAL: Ensure response body is always closed in error paths before goroutine takes ownership
 	var goroutineStarted bool
 	defer func() {
@@ -368,33 +371,33 @@ func postServerRestoreBackup(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Mark that goroutine will take ownership of the response
 	goroutineStarted = true
 
 	go func(s *server.Server, uuid string, logger *log.Entry) {
 		// CRITICAL: Always close response body to prevent resource leak
 		defer res.Body.Close()
-		
+		// Never let a panic in this goroutine crash the daemon.
+		defer func() {
+			if r := recover(); r != nil {
+				logger.WithField("panic", r).Error("S3 restore goroutine panicked")
+			}
+		}()
+
 		// ATOMIC REGISTRATION: Register and get accurate queue status
 		registry := server.GetBackupOperationRegistry()
 		logger.Info("registering S3 restore operation in queue system")
-		
+
 		// ATOMIC: Register operation and get queue status atomically
 		_, ctx, cancel, err, wasQueued := registry.Register(s.Context(), uuid, s.ID(), server.OperationTypeRestore)
 		if err != nil {
 			logger.WithError(err).Error("failed to register S3 restore operation")
-			s.Events().Publish(server.DaemonMessageEvent, "Failed to register S3 restore: " + err.Error())
+			s.Events().Publish(server.DaemonMessageEvent, "Failed to register S3 restore: "+err.Error())
 			return
 		}
-		
-		// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
-		if wasQueued {
-			s.Environment.SetState(environment.ProcessRestoreQueuedState)
-			s.Events().Publish(server.DaemonMessageEvent, "S3 restore was queued and slot acquired - starting restore process...")
-		} else {
-			s.Events().Publish(server.DaemonMessageEvent, "S3 restore slot available - starting restore process immediately...")
-		}
+		// Defer cleanup immediately after a successful registration so that the
+		// registry slot is always released, even if anything below panics.
 		defer func() {
 			if r := recover(); r != nil {
 				logger.WithField("panic", r).Error("S3 restore operation panicked")
@@ -406,20 +409,28 @@ func postServerRestoreBackup(c *gin.Context) {
 			// Note: SetRestoring is now handled atomically within the restore function
 		}()
 
+		// ACCURATE STATE MANAGEMENT: Set state based on actual queue experience
+		if wasQueued {
+			s.Environment.SetState(environment.ProcessRestoreQueuedState)
+			s.Events().Publish(server.DaemonMessageEvent, "S3 restore was queued and slot acquired - starting restore process...")
+		} else {
+			s.Events().Publish(server.DaemonMessageEvent, "S3 restore slot available - starting restore process immediately...")
+		}
+
 		// Add 4-hour timeout for restore operations
 		ctx, timeoutCancel := context.WithTimeout(ctx, 4*time.Hour)
 		defer timeoutCancel()
 
 		logger.WithField("content_length", res.ContentLength).Info("starting restoration process for server backup using S3 driver")
-		
+
 		// Create S3 backup instance
 		s3Backup := backup.NewS3(client, uuid, "")
-		
+
 		// Wrap response body with download progress tracking if we know the size
-		var downloadReader io.ReadCloser = res.Body
+		downloadReader := io.ReadCloser(res.Body)
 		if res.ContentLength > 0 {
 			logger.WithField("size_mb", res.ContentLength/(1024*1024)).Info("S3 backup download size known, adding download progress tracking")
-			
+
 			// Progress callback for download tracking - send WebSocket events!
 			onProgress := func(downloaded, total int64) {
 				// Calculate percentage for download phase
@@ -427,7 +438,7 @@ func postServerRestoreBackup(c *gin.Context) {
 				if total > 0 {
 					percentage = int((downloaded * 100) / total)
 				}
-				
+
 				// Send WebSocket event for download progress
 				// This gives immediate feedback to the user
 				s.Events().Publish(server.BackupProgressEvent, server.BackupProgressUpdate{
@@ -437,35 +448,35 @@ func postServerRestoreBackup(c *gin.Context) {
 					BytesWritten: downloaded,
 					BytesTotal:   total,
 				})
-				
+
 				// Also log for debugging
 				if percentage%10 == 0 || downloaded == total {
 					logger.WithFields(log.Fields{
 						"downloaded_percentage": percentage,
-						"downloaded_mb": downloaded / (1024 * 1024),
-						"total_mb": total / (1024 * 1024),
+						"downloaded_mb":         downloaded / (1024 * 1024),
+						"total_mb":              total / (1024 * 1024),
 					}).Info("S3 download progress")
 				}
 			}
-			
+
 			downloadReader = backup.NewDownloadProgressReader(res.Body, res.ContentLength, uuid, onProgress)
 		}
-		
+
 		// Pass download size through context for accurate restore progress
 		if res.ContentLength > 0 {
-			ctx = context.WithValue(ctx, "download_size", res.ContentLength)
+			ctx = context.WithValue(ctx, server.DownloadSizeContextKey, res.ContentLength)
 		}
-		
-		if err := s.RestoreBackupWithContext(ctx, s3Backup, downloadReader); err != nil {
+
+		if err := s.RestoreBackupWithContext(ctx, s3Backup, downloadReader, data.TruncateDirectory); err != nil {
 			logger.WithField("error", errors.WithStack(err)).Error("failed to restore remote S3 backup to server")
-			s.Events().Publish(server.DaemonMessageEvent, "Failed server restoration from S3 backup: " + err.Error())
+			s.Events().Publish(server.DaemonMessageEvent, "Failed server restoration from S3 backup: "+err.Error())
 			// BackupRestoreCompletedEvent is now sent by RestoreBackupWithContext
 		} else {
 			logger.WithFields(log.Fields{
 				"is_restoring": s.IsRestoring(),
 				"server_state": s.Environment.State(),
 			}).Info("S3 restore completed successfully")
-			
+
 			s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from S3 backup.")
 			// BackupRestoreCompletedEvent is now sent by RestoreBackupWithContext
 			logger.Info("completed server restoration from S3 backup")
@@ -487,7 +498,7 @@ func deleteServerBackup(c *gin.Context) {
 
 	// UNIFIED BEHAVIOR: Try to locate and delete backup regardless of type (Local or S3)
 	// This ensures consistent deletion behavior between storage types (WORK.md requirement)
-	
+
 	// First try to locate as Local backup
 	if localBackup, _, err := backup.LocateLocal(client, backupID); err == nil {
 		// Found as Local backup - delete it
@@ -498,7 +509,7 @@ func deleteServerBackup(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 		return
 	}
-	
+
 	// If not found as Local backup, check if it's an S3 backup file that exists locally
 	// S3 backups may leave local files behind after failed uploads or for debugging
 	s3Backup := backup.NewS3(client, backupID, "")
@@ -511,7 +522,7 @@ func deleteServerBackup(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 		return
 	}
-	
+
 	// If neither Local nor S3 backup file found, return 404
 	c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
 		"error": "The requested backup was not found on this server.",
@@ -690,17 +701,8 @@ func isBlockedBackupRestoreIP(host string, ip net.IP) bool {
 		return true
 	}
 	addr = addr.Unmap()
-	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || isExplicitlyBlockedBackupRestoreIP(addr) {
+	if wnet.IsInternal(addr) {
 		return !isAllowedBackupRestoreDestination(host, addr)
-	}
-	return false
-}
-
-func isExplicitlyBlockedBackupRestoreIP(addr netip.Addr) bool {
-	for _, prefix := range blockedBackupRestorePrefixes {
-		if prefix.Contains(addr) {
-			return true
-		}
 	}
 	return false
 }
@@ -708,23 +710,7 @@ func isExplicitlyBlockedBackupRestoreIP(addr netip.Addr) bool {
 // isAllowedBackupRestoreDestination reports whether the given host/addr is explicitly
 // permitted through the System.Backups.RestoreHostAllowlist configuration option.
 func isAllowedBackupRestoreDestination(host string, addr netip.Addr) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	for _, entry := range config.Get().System.Backups.RestoreHostAllowlist {
-		entry = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(entry)), ".")
-		if entry == "" {
-			continue
-		}
-		if entry == host {
-			return true
-		}
-		if allowedAddr, err := netip.ParseAddr(entry); err == nil && allowedAddr.Unmap() == addr {
-			return true
-		}
-		if prefix, err := netip.ParsePrefix(entry); err == nil && prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
+	return wnet.IsAllowed(config.Get().System.Backups.RestoreHostAllowlist, host, addr)
 }
 
 // isSupportedBackupRestoreContentType reports whether the given Content-Type header

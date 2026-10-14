@@ -17,28 +17,30 @@ import (
 // mockEnvironment is a minimal mock implementation for testing
 type mockEnvironment struct{}
 
-func (m *mockEnvironment) Type() string { return "mock" }
-func (m *mockEnvironment) Config() *environment.Configuration { return nil }
-func (m *mockEnvironment) Events() *events.Bus { return events.NewBus() }
-func (m *mockEnvironment) Exists() (bool, error) { return true, nil }
+func (m *mockEnvironment) Type() string                                { return "mock" }
+func (m *mockEnvironment) Config() *environment.Configuration          { return nil }
+func (m *mockEnvironment) Events() *events.Bus                         { return events.NewBus() }
+func (m *mockEnvironment) Exists() (bool, error)                       { return true, nil }
 func (m *mockEnvironment) IsRunning(ctx context.Context) (bool, error) { return false, nil }
-func (m *mockEnvironment) InSituUpdate() error { return nil }
-func (m *mockEnvironment) OnBeforeStart(ctx context.Context) error { return nil }
-func (m *mockEnvironment) Start(ctx context.Context) error { return nil }
-func (m *mockEnvironment) Stop(ctx context.Context) error { return nil }
-func (m *mockEnvironment) WaitForStop(ctx context.Context, duration time.Duration, terminate bool) error { return nil }
+func (m *mockEnvironment) InSituUpdate() error                         { return nil }
+func (m *mockEnvironment) OnBeforeStart(ctx context.Context) error     { return nil }
+func (m *mockEnvironment) Start(ctx context.Context) error             { return nil }
+func (m *mockEnvironment) Stop(ctx context.Context) error              { return nil }
+func (m *mockEnvironment) WaitForStop(ctx context.Context, duration time.Duration, terminate bool) error {
+	return nil
+}
 func (m *mockEnvironment) Terminate(ctx context.Context, signal string) error { return nil }
-func (m *mockEnvironment) Destroy() error { return nil }
-func (m *mockEnvironment) ExitState() (uint32, bool, error) { return 0, false, nil }
-func (m *mockEnvironment) Create() error { return nil }
-func (m *mockEnvironment) Attach(ctx context.Context) error { return nil }
-func (m *mockEnvironment) SendCommand(string) error { return nil }
-func (m *mockEnvironment) Readlog(int) ([]string, error) { return nil, nil }
-func (m *mockEnvironment) State() string { return "offline" }
-func (m *mockEnvironment) SetState(string) {}
-func (m *mockEnvironment) Uptime(ctx context.Context) (int64, error) { return 0, nil }
-func (m *mockEnvironment) SetLogCallback(func([]byte)) {}
-func (m *mockEnvironment) SetStream(bool) {}
+func (m *mockEnvironment) Destroy() error                                     { return nil }
+func (m *mockEnvironment) ExitState() (uint32, bool, error)                   { return 0, false, nil }
+func (m *mockEnvironment) Create() error                                      { return nil }
+func (m *mockEnvironment) Attach(ctx context.Context) error                   { return nil }
+func (m *mockEnvironment) SendCommand(string) error                           { return nil }
+func (m *mockEnvironment) Readlog(int) ([]string, error)                      { return nil, nil }
+func (m *mockEnvironment) State() string                                      { return "offline" }
+func (m *mockEnvironment) SetState(string)                                    {}
+func (m *mockEnvironment) Uptime(ctx context.Context) (int64, error)          { return 0, nil }
+func (m *mockEnvironment) SetLogCallback(func([]byte))                        {}
+func (m *mockEnvironment) SetStream(bool)                                     {}
 
 // newMockServer creates a minimal Server instance for testing
 func newMockServer() *Server {
@@ -220,7 +222,7 @@ func TestProgressTrackerByteMode(t *testing.T) {
 	defer tracker.Close()
 
 	// Add bytes written
-	prog.AddWritten(1024 * 1024)     // 1MB
+	prog.AddWritten(1024 * 1024) // 1MB
 	tracker.CheckProgress()
 
 	prog.AddWritten(2 * 1024 * 1024) // Another 2MB
@@ -284,7 +286,7 @@ func TestProgressEvent(t *testing.T) {
 // TestS3ProgressSplitLogic tests the 80/20 progress split for S3
 func TestS3ProgressSplitLogic(t *testing.T) {
 	// Test S3 progress calculation (80% archive, 20% upload)
-	
+
 	testCases := []struct {
 		archiveBytes int64
 		totalBytes   int64
@@ -320,15 +322,15 @@ func TestProgressTrackerPerformance(t *testing.T) {
 
 	// Measure time for many rapid progress updates
 	start := time.Now()
-	
+
 	for i := 0; i < 1000; i++ {
 		prog.AddWritten(1000) // 1000 rapid updates
 		tracker.CheckProgress()
 	}
-	
+
 	elapsed := time.Since(start)
 
 	// Should be very fast (under 100ms for 1000 calls)
-	assert.True(t, elapsed < 100*time.Millisecond, 
+	assert.True(t, elapsed < 100*time.Millisecond,
 		"1000 CheckProgress calls should be fast, took %v", elapsed)
 }

@@ -59,7 +59,7 @@ func (eh *eventHandler) Log(e models.Event, fa FileAction) error {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					// Cannot access server logger here, so no logging
+					log.WithField("panic", r).WithField("event", e).Warn("sftp: activity publisher panicked")
 				}
 			}()
 			eh.publisher.PublishActivity("activity", map[string]any{

@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/server/backup"
 )
 
 func init() {
@@ -31,7 +30,6 @@ func TestBackupCleanupOnServerDeletion(t *testing.T) {
 
 	// Test server deletion cleanup for multiple servers
 	servers := []string{"server1", "server2", "server3"}
-	var allOperations []string
 
 	// Register operations for different servers (limit to stay under 8 total)
 	for _, serverID := range servers {
@@ -39,8 +37,7 @@ func TestBackupCleanupOnServerDeletion(t *testing.T) {
 			backupID := serverID + "_backup_" + string(rune(i+'0'))
 			_, _, cancel, err, _ := registry.Register(ctx, backupID, serverID, OperationTypeBackup)
 			require.NoError(t, err)
-			allOperations = append(allOperations, backupID)
-			
+
 			// Clean up individual operations
 			defer func(bid string) {
 				cancel()
@@ -113,22 +110,6 @@ func TestBackupCleanupStaleOperations(t *testing.T) {
 	assert.Equal(t, initialCount, registry.Count())
 }
 
-// TestLocalBackupCleanupFunction tests the local backup file cleanup
-func TestLocalBackupCleanupFunction(t *testing.T) {
-	// This test verifies the cleanup function exists and can be called
-	// We don't test actual file operations to avoid affecting real files
-	
-	// Test cleanup function doesn't panic with non-existent server
-	err := backup.CleanupBackupFilesForServer("non-existent-server-123")
-	
-	// Function should handle non-existent servers gracefully
-	// Error is acceptable (directory not found), panic is not
-	if err != nil {
-		assert.Contains(t, err.Error(), "no such file or directory", 
-			"Should handle non-existent server gracefully")
-	}
-}
-
 // TestBackupCleanupRace tests concurrent cleanup operations
 func TestBackupCleanupRace(t *testing.T) {
 	registry := GetBackupOperationRegistry()
@@ -150,7 +131,7 @@ func TestBackupCleanupRace(t *testing.T) {
 
 	// Cleanup by server
 	go func() {
-		registry.CancelAllForServer("race_server")
+		_ = registry.CancelAllForServer("race_server")
 		done <- true
 	}()
 
@@ -166,7 +147,7 @@ func TestBackupCleanupRace(t *testing.T) {
 
 	// Should not have any operations for race_server
 	assert.Equal(t, 0, registry.CountForServer("race_server"))
-	
+
 	// Registry should be in consistent state
 	finalCount := registry.Count()
 	assert.True(t, finalCount <= initialCount, "Count should not increase")
@@ -228,12 +209,12 @@ func TestServerDeletionBackupIntegration(t *testing.T) {
 
 	// Verify operations are active
 	assert.Equal(t, 2, registry.CountForServer(serverID))
-	
+
 	retrieved, exists := registry.Get("backup_op")
 	assert.True(t, exists)
 	assert.Equal(t, backupOp.ID, retrieved.ID)
 
-	retrieved, exists = registry.Get("restore_op") 
+	retrieved, exists = registry.Get("restore_op")
 	assert.True(t, exists)
 	assert.Equal(t, restoreOp.ID, retrieved.ID)
 
@@ -243,10 +224,10 @@ func TestServerDeletionBackupIntegration(t *testing.T) {
 
 	// Verify all operations are cancelled and removed
 	assert.Equal(t, 0, registry.CountForServer(serverID))
-	
+
 	_, exists = registry.Get("backup_op")
 	assert.False(t, exists, "Backup operation should be removed")
-	
+
 	_, exists = registry.Get("restore_op")
 	assert.False(t, exists, "Restore operation should be removed")
 

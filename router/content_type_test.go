@@ -21,23 +21,23 @@ func TestIsValidBackupContentType(t *testing.T) {
 		// TAR formats
 		{"TAR x-tar", "application/x-tar", true},
 		{"TAR tar", "application/tar", true},
-		
+
 		// Generic formats
 		{"Octet stream", "application/octet-stream", true},
 		{"Binary octet", "binary/octet-stream", true},
-		
+
 		// Backup specific
 		{"Compressed tar", "application/x-compressed-tar", true},
 		{"TGZ", "application/x-tgz", true},
-		
+
 		// Case insensitive
 		{"Uppercase GZIP", "APPLICATION/X-GZIP", true},
 		{"Mixed case", "Application/Octet-Stream", true},
-		
+
 		// With charset parameters
 		{"GZIP with charset", "application/x-gzip; charset=binary", true},
 		{"Octet with boundary", "application/octet-stream; boundary=something", true},
-		
+
 		// Invalid types
 		{"Plain text", "text/plain", false},
 		{"HTML", "text/html", false},

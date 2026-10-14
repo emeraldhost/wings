@@ -100,6 +100,7 @@ Real-time backup creation/restoration progress.
 {
   "event": "backup progress",
   "args": [{
+    "backup_id": "47363ce7-d70a-430e-8e75-6dc87c8d016d",
     "type": "create",
     "percentage": 45,
     "bytes_written": 471859200,
@@ -109,10 +110,35 @@ Real-time backup creation/restoration progress.
 ```
 
 **Fields:**
-- `type`: `"create"` or `"restore"`
+- `backup_id`: UUID of the backup
+- `type`: `"create"`, `"restore"`, or `"download"` (S3 backup being downloaded for a restore)
 - `percentage`: 0-100, or -1 for error
-- `bytes_written`: Bytes processed
-- `bytes_total`: Total bytes (create only)
+- `bytes_written`: Bytes processed (omitted when 0)
+- `bytes_total`: Total bytes (omitted when unknown)
+
+Requires the `backup.read` permission (same gate as `backup completed` / `backup restore completed`).
+
+#### `download progress` ⭐ *New*
+Progress of a remote file pull (`POST /api/servers/:server/files/pull` with `foreground: false`).
+```json
+{
+  "event": "download progress",
+  "args": [{
+    "identifier": "download-uuid",
+    "filename": "world.zip",
+    "directory": "/",
+    "url": "https://example.com/world.zip",
+    "percentage": 45,
+    "bytes_written": 471859200,
+    "bytes_total": 1048576000,
+    "status": "downloading"
+  }]
+}
+```
+
+- `status`: `"downloading"`, `"completed"` (percentage 100) or `"failed"` (percentage -1); a final event is always sent
+- Throttled to 250 ms; `bytes_total` is 0 when the size is unknown
+- Requires the `file.read` permission
 
 #### `backup completed`
 Backup creation finished.
@@ -122,8 +148,8 @@ Backup creation finished.
   "args": [{
     "uuid": "backup-uuid",
     "is_successful": true,
-    "checksum": "sha1-hash",
-    "checksum_type": "sha1", 
+    "checksum": "sha256-hash",
+    "checksum_type": "sha256",
     "file_size": 1048576000
   }]
 }
@@ -141,12 +167,12 @@ Backup restoration finished.
 ### 📁 **Activity Events** ⭐ *Enhanced*
 
 #### `activity`
-File operations and server activities.
+File operations and server activities, pushed live in addition to being stored for the Panel. Requires the `activity.read` permission.
 ```json
 {
   "event": "activity",
   "args": [{
-    "event": "server:file.write",
+    "event": "server:sftp.write",
     "user": "user-uuid",
     "metadata": {
       "file": "config/server.properties"
@@ -156,15 +182,16 @@ File operations and server activities.
 ```
 
 **Common Activity Types:**
-- `server:file.write` - File created/modified
-- `server:file.delete` - File deleted  
-- `server:file.rename` - File renamed
-- `server:file.create-directory` - Directory created
-- `server:file.compress` - Files compressed
-- `server:file.decompress` - Archive extracted
+- `server:sftp.create` / `server:sftp.write` - File created / modified (SFTP or the file API)
+- `server:sftp.delete` - File deleted
+- `server:sftp.rename` - File renamed
+- `server:sftp.create-directory` - Directory created
+- `server:file.downloaded` - Remote file pulled
+- `server:file.compressed` / `server:file.decompressed` - Archive created / extracted
+- `server:file.chmod` - Permissions changed
 - `server:console.command` - Console command executed
-- `server:power.start` - Server started
-- `server:power.stop` - Server stopped
+- `server:power.start` / `server:power.stop` - Power actions
+- `backup_failed` - All backup retries failed (different payload: `{event, timestamp, backup_id, server_id, error, total_attempts, message}`)
 
 ### 🔄 **Transfer Events**
 
@@ -204,7 +231,8 @@ Server has been deleted from the system.
 | `status` | On state change | None |
 | `stats` | Every 1-2 seconds | Built-in |
 | `console output` | Real-time | None |
-| `backup progress` | Max 2/second | 500ms throttling |
+| `backup progress` | Max 4/second | 250 ms throttling (`download` type unthrottled) |
+| `download progress` | Max 4/second | 250 ms throttling |
 | `activity` | On action | None |
 | `install output` | Real-time | None |
 | `daemon message` | As needed | None |

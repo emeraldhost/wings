@@ -13,19 +13,12 @@ import (
 	"emperror.dev/errors"
 	"github.com/apex/log"
 	"github.com/google/uuid"
-	"github.com/mholt/archives"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/Rene-Roscher/wings/config"
 	"github.com/Rene-Roscher/wings/remote"
 	"github.com/Rene-Roscher/wings/server/filesystem"
 )
-
-var format = archives.CompressedArchive{
-	Compression: archives.Gz{},
-	Archival:    archives.Tar{},
-	Extraction:  archives.Tar{},
-}
 
 type AdapterType string
 
@@ -53,7 +46,7 @@ type BackupInterface interface {
 	Generate(context.Context, *filesystem.Filesystem, string) (*ArchiveDetails, error)
 	// Ignored returns the ignored files for this backup instance.
 	Ignored() string
-	// Checksum returns a SHA1 checksum for the generated backup.
+	// Checksum returns a SHA256 checksum for the generated backup.
 	Checksum() ([]byte, error)
 	// Size returns the size of the generated backup.
 	Size() (int64, error)
@@ -83,6 +76,11 @@ type Backup struct {
 	client     remote.Client
 	adapter    AdapterType
 	logContext map[string]interface{}
+
+	// foundPath is set by LocateLocal when an existing local backup was found
+	// under a legacy extension (.tar). Path() returns it, so Size, Checksum and
+	// Details read the same file that Restore and Remove use.
+	foundPath string
 }
 
 func (b *Backup) SetClient(c remote.Client) {
@@ -106,25 +104,24 @@ func (b *Backup) validateIdentifier() error {
 	if err != nil {
 		return err
 	}
-	b.Uuid = identifier
+	// Only write when the identifier actually changes, so that concurrent readers
+	// (e.g. Checksum and Size running in parallel from Details) do not race.
+	if b.Uuid != identifier {
+		b.Uuid = identifier
+	}
 	return nil
 }
 
 // Path returns the path for this specific backup.
 func (b *Backup) Path() string {
+	if b.foundPath != "" {
+		return b.foundPath
+	}
 	identifier, err := b.normalizedIdentifier()
 	if err != nil {
 		identifier = path.Base(b.Identifier())
 	}
 	return path.Join(config.Get().System.BackupDirectory, identifier+".tar.gz")
-}
-
-// PathForLocalBackup returns the path for a LocalBackup, checking for foundPath override
-func (b *Backup) PathForLocalBackup(foundPath string) string {
-	if foundPath != "" {
-		return foundPath // Use discovered path for backward compatibility
-	}
-	return b.Path() // Use standard path generation
 }
 
 // Size returns the size of the generated backup.
@@ -164,8 +161,13 @@ func (b *Backup) Checksum() ([]byte, error) {
 // Details returns both the checksum and size of the archive currently stored on
 // the disk to the caller.
 func (b *Backup) Details(ctx context.Context, parts []remote.BackupPart) (*ArchiveDetails, error) {
+	// Normalize the identifier once before the checksum and size are computed
+	// concurrently below.
+	if err := b.validateIdentifier(); err != nil {
+		return nil, err
+	}
 	ad := ArchiveDetails{ChecksumType: "sha256", Parts: parts}
-	g, ctx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 
 	g.Go(func() error {
 		resp, err := b.Checksum()

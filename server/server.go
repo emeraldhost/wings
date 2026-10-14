@@ -13,6 +13,7 @@ import (
 
 	"emperror.dev/errors"
 	"github.com/apex/log"
+	"github.com/asaskevich/govalidator"
 	"github.com/creasty/defaults"
 
 	"github.com/Rene-Roscher/wings/config"
@@ -75,17 +76,14 @@ type Server struct {
 	sftpBag     *system.ContextBag
 
 	sinks map[system.SinkName]*system.SinkPool
-
-	logSink     *system.SinkPool
-	installSink *system.SinkPool
 }
 
 // AtomicStateTransition represents an atomic change to server operational state
 type AtomicStateTransition struct {
 	EnvironmentState string
-	BackingUp        *bool   // nil = no change
-	Restoring        *bool   // nil = no change
-	Transferring     *bool   // nil = no change
+	BackingUp        *bool // nil = no change
+	Restoring        *bool // nil = no change
+	Transferring     *bool // nil = no change
 }
 
 // ApplyAtomicStateTransition atomically applies state changes to prevent race conditions
@@ -96,7 +94,7 @@ func (s *Server) ApplyAtomicStateTransition(transition AtomicStateTransition) {
 		"before_transferring": s.transferring.Load(),
 		"before_env_state":    s.Environment.State(),
 	}).Debug("ATOMIC STATE TRANSITION: before")
-	
+
 	// Apply all atomic state changes together
 	if transition.BackingUp != nil {
 		s.Log().WithField("new_backing_up", *transition.BackingUp).Debug("setting BackingUp flag")
@@ -110,13 +108,13 @@ func (s *Server) ApplyAtomicStateTransition(transition AtomicStateTransition) {
 		s.Log().WithField("new_transferring", *transition.Transferring).Debug("setting Transferring flag")
 		s.transferring.Store(*transition.Transferring)
 	}
-	
+
 	// Finally set environment state
 	if transition.EnvironmentState != "" {
 		s.Log().WithField("new_env_state", transition.EnvironmentState).Debug("setting Environment state")
 		s.Environment.SetState(transition.EnvironmentState)
 	}
-	
+
 	s.Log().WithFields(log.Fields{
 		"after_backing_up":   s.backingUp.Load(),
 		"after_restoring":    s.restoring.Load(),
@@ -162,24 +160,16 @@ func (s *Server) CleanupForDestroy() {
 	s.DestroyAllSinks()
 	s.Websockets().CancelAll()
 	s.powerLock.Destroy()
-	
-	// CRITICAL: Cancel all running backup operations for this server
-	// This prevents resource leaks and inconsistent states during server deletion
-	registry := GetBackupOperationRegistry()
-	if err := registry.CancelAllForServer(s.ID()); err != nil {
-		s.Log().WithError(err).Error("failed to cancel backup operations during server cleanup")
+}
+
+// CancelBackupOperations cancels every running or queued backup and restore of
+// this server. It is keyed by UUID, so it must only be called when the server
+// itself is deleted, never for a throwaway duplicate instance that shares the
+// UUID of a live server (duplicate create, transfer cleanup).
+func (s *Server) CancelBackupOperations() {
+	if err := GetBackupOperationRegistry().CancelAllForServer(s.ID()); err != nil {
+		s.Log().WithError(err).Error("failed to cancel backup operations during server deletion")
 	}
-	
-	// CRITICAL: Clean up local backup files to prevent disk space leaks
-	// This removes orphaned backup files when the server is deleted
-	go func() {
-		// Run backup file cleanup in background to avoid blocking server deletion
-		// Import is required here since backup package imports server package (circular import)
-		// We'll call this via a method on the server instead
-		if err := s.cleanupBackupFiles(); err != nil {
-			s.Log().WithError(err).Error("failed to clean up backup files during server deletion")
-		}
-	}()
 }
 
 // ID returns the UUID for the server instance.
@@ -287,24 +277,28 @@ func (s *Server) Sync() error {
 // can be called from scoped where the server may not be fully initialized,
 // therefore other things like the filesystem and environment may not exist yet.
 func (s *Server) SyncWithConfiguration(cfg remote.ServerConfigurationResponse) error {
-	c := Configuration{
+	c := configurationData{
 		CrashDetectionEnabled: config.Get().System.CrashDetection.CrashDetectionEnabled,
 	}
 	if err := json.Unmarshal(cfg.Settings, &c); err != nil {
 		return errors.WithStackIf(err)
 	}
 
+	// Only accept a UUID from the Panel, and never allow it to change once the
+	// server has been created.
+	if !govalidator.IsUUID(c.Uuid) {
+		return errors.New("server: configuration returned by the Panel contains an invalid server uuid")
+	}
+	if id := s.ID(); id != "" && id != c.Uuid {
+		return errors.New("server: configuration returned by the Panel is for a different server")
+	}
+
 	s.cfg.mu.Lock()
 	defer s.cfg.mu.Unlock()
 
-	// Lock the new configuration. Since we have the deferred Unlock above we need
-	// to make sure that the NEW configuration object is already locked since that
-	// defer is running on the memory address for "s.cfg.mu" which we're explicitly
-	// changing on the next line.
-	c.mu.Lock()
-
-	//goland:noinspection GoVetCopyLock
-	s.cfg = c
+	// Only replace the values, never the mutex, since other goroutines may be
+	// waiting to acquire it and would never be woken if it were overwritten.
+	s.cfg.configurationData = c
 
 	s.Lock()
 	s.procConfig = cfg.ProcessConfiguration
@@ -333,7 +327,7 @@ func (s *Server) CreateEnvironment() error {
 		// without any dashes.
 		p := filepath.Join(cfg.System.MachineID.Directory, s.ID())
 		machineID := append(bytes.ReplaceAll([]byte(s.ID()), []byte{'-'}, []byte{}), '\n')
-		if err := os.WriteFile(p, machineID, 0o644); err != nil {
+		if err := os.WriteFile(p, machineID, 0o644); err != nil { //nolint:gosec // mounted as /etc/machine-id, which the container user must be able to read
 			return fmt.Errorf("failed to write machine-id (at '%s') for server '%s': %w", p, s.ID(), err)
 		}
 	}
@@ -449,107 +443,11 @@ func (s *Server) ToAPIResponse() APIResponse {
 		State:         s.Environment.State(),
 		IsSuspended:   s.IsSuspended(),
 		Utilization:   s.Proc(),
-		Configuration: *s.Config(),
+		Configuration: s.cfg.snapshot(),
 	}
 }
 
 // PublishActivity implements the EventPublisher interface for SFTP event handling
 func (s *Server) PublishActivity(event string, data map[string]any) {
 	s.Events().Publish(ActivityEvent, data)
-}
-
-// cleanupBackupFiles removes all local backup files associated with this server
-// This method is called during server deletion to prevent orphaned backup files
-func (s *Server) cleanupBackupFiles() error {
-	// We need to avoid circular imports since backup package imports server package
-	// For now, we'll implement a basic cleanup using the same logic as in backup_local.go
-	// but without importing the backup package
-	
-	backupDir := config.Get().System.BackupDirectory
-	logger := s.Log().WithFields(log.Fields{
-		"server_id":  s.ID(),
-		"backup_dir": backupDir,
-	})
-
-	// List all files in backup directory
-	files, err := os.ReadDir(backupDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			logger.Debug("backup directory does not exist, nothing to clean up")
-			return nil
-		}
-		return errors.WrapIf(err, "failed to read backup directory")
-	}
-
-	var removedFiles []string
-	var failedRemovals []string
-
-	// Common backup file extensions
-	backupExtensions := []string{".tar.gz", ".tar", ".gz"}
-
-	// Iterate through all files and find backup files
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		fileName := file.Name()
-		
-		// Check if this file looks like a backup file
-		isBackupFile := false
-		lowerName := strings.ToLower(fileName)
-		for _, ext := range backupExtensions {
-			if strings.HasSuffix(lowerName, ext) {
-				isBackupFile = true
-				break
-			}
-		}
-		
-		if !isBackupFile {
-			continue
-		}
-
-		// Extract potential backup UUID from filename (before first dot)
-		parts := strings.Split(fileName, ".")
-		if len(parts) < 2 {
-			continue // Not a valid backup file format
-		}
-
-		backupUUID := parts[0]
-		
-		// Skip if the UUID doesn't look valid (should be 36 characters for UUID)
-		if len(backupUUID) != 36 {
-			continue
-		}
-
-		filePath := filepath.Join(backupDir, fileName)
-		
-		logger.WithField("file", fileName).Debug("found backup file, attempting removal")
-		
-		if err := os.Remove(filePath); err != nil {
-			logger.WithError(err).WithField("file", fileName).Error("failed to remove backup file")
-			failedRemovals = append(failedRemovals, fileName)
-		} else {
-			logger.WithField("file", fileName).Info("removed backup file")
-			removedFiles = append(removedFiles, fileName)
-		}
-	}
-
-	// Log summary
-	if len(removedFiles) > 0 {
-		logger.WithFields(log.Fields{
-			"removed_count": len(removedFiles),
-			"removed_files": removedFiles,
-		}).Info("cleaned up backup files for server")
-	}
-
-	if len(failedRemovals) > 0 {
-		logger.WithFields(log.Fields{
-			"failed_count": len(failedRemovals),
-			"failed_files": failedRemovals,
-		}).Warn("some backup files could not be removed")
-		return errors.New("failed to remove some backup files")
-	}
-
-	return nil
 }

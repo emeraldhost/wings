@@ -10,13 +10,13 @@ import (
 
 // DownloadProgressReader wraps an io.ReadCloser to track download progress
 type DownloadProgressReader struct {
-	reader      io.ReadCloser
-	totalSize   int64
-	downloaded  atomic.Int64
-	lastReport  atomic.Int64
-	onProgress  func(downloaded, total int64)
-	logger      *log.Entry
-	backupID    string
+	reader     io.ReadCloser
+	totalSize  int64
+	downloaded atomic.Int64
+	lastReport atomic.Int64
+	onProgress func(downloaded, total int64)
+	logger     *log.Entry
+	backupID   string
 }
 
 // NewDownloadProgressReader creates a new progress-tracking reader
@@ -36,7 +36,7 @@ func (r *DownloadProgressReader) Read(p []byte) (n int, err error) {
 	if n > 0 {
 		// Update downloaded bytes
 		current := r.downloaded.Add(int64(n))
-		
+
 		// Report progress at most once per 100ms to avoid spam
 		now := time.Now().UnixNano()
 		lastReport := r.lastReport.Load()
@@ -45,7 +45,7 @@ func (r *DownloadProgressReader) Read(p []byte) (n int, err error) {
 				if r.onProgress != nil {
 					r.onProgress(current, r.totalSize)
 				}
-				
+
 				// Log progress every 10%
 				if r.totalSize > 0 {
 					percentage := (current * 100) / r.totalSize
@@ -60,7 +60,7 @@ func (r *DownloadProgressReader) Read(p []byte) (n int, err error) {
 			}
 		}
 	}
-	
+
 	// Log completion
 	if err == io.EOF && r.totalSize > 0 {
 		r.logger.WithFields(log.Fields{
@@ -68,7 +68,7 @@ func (r *DownloadProgressReader) Read(p []byte) (n int, err error) {
 			"total_mb":      r.totalSize / (1024 * 1024),
 		}).Info("S3 download completed")
 	}
-	
+
 	return n, err
 }
 

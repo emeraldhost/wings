@@ -19,7 +19,7 @@ import (
 func TestBinaryCompressionIntegrity(t *testing.T) {
 	// Use the test filesystem helper
 	fs, _ := NewFs()
-	
+
 	tmpDir := fs.Path() // Use the filesystem's root directory
 
 	// Test with different binary files
@@ -55,7 +55,7 @@ func TestBinaryCompressionIntegrity(t *testing.T) {
 			// Copy the binary to our test directory
 			binaryName := filepath.Base(tc.binaryPath)
 			testBinaryPath := filepath.Join(tmpDir, binaryName)
-			
+
 			err := copyFile(tc.binaryPath, testBinaryPath)
 			require.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestBinaryCompressionIntegrity(t *testing.T) {
 			archiveInfo, err := fs.CompressFiles("", []string{binaryName})
 			require.NoError(t, err)
 			require.NotNil(t, archiveInfo)
-			
+
 			archivePath := filepath.Join(tmpDir, archiveInfo.Name())
 			t.Logf("Created archive: %s (size: %d bytes)", archivePath, archiveInfo.Size())
 
@@ -99,11 +99,11 @@ func TestBinaryCompressionIntegrity(t *testing.T) {
 			// Verify binary was restored
 			restoredInfo, err := os.Stat(testBinaryPath)
 			require.NoError(t, err, "Binary should be restored")
-			
+
 			// Check permissions
 			restoredMode := restoredInfo.Mode()
 			t.Logf("Restored binary permissions: %v", restoredMode)
-			
+
 			// Check if executable bit is preserved (at least for owner)
 			assert.True(t, restoredMode&0100 != 0, "Binary should have executable permission")
 
@@ -121,19 +121,19 @@ func TestBinaryCompressionIntegrity(t *testing.T) {
 			if err != nil {
 				t.Logf("Error executing restored binary: %v", err)
 				t.Logf("Output: %s", string(restoredOutput))
-				
+
 				// Try to get more info about the failure
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					t.Logf("Exit code: %d", exitErr.ExitCode())
 				}
-				
+
 				// Check with ldd if it's a library issue
 				lddCmd := exec.Command("ldd", testBinaryPath)
 				lddOutput, _ := lddCmd.CombinedOutput()
 				t.Logf("ldd output:\n%s", string(lddOutput))
 			}
 			require.NoError(t, err, "Restored binary should execute successfully")
-			
+
 			// Verify output is the same
 			assert.Equal(t, string(output), string(restoredOutput), "Binary output should be identical")
 
@@ -207,17 +207,17 @@ func TestCompressionWithMultipleBinaries(t *testing.T) {
 	// Copy multiple binaries
 	binaries := []string{"/bin/ls", "/bin/cat", "/bin/echo"}
 	checksums := make(map[string]string)
-	
+
 	for _, bin := range binaries {
 		if _, err := os.Stat(bin); os.IsNotExist(err) {
 			continue
 		}
-		
+
 		name := filepath.Base(bin)
 		dst := filepath.Join(tmpDir, name)
 		err := copyFile(bin, dst)
 		require.NoError(t, err)
-		
+
 		checksum, err := calculateChecksum(dst)
 		require.NoError(t, err)
 		checksums[name] = checksum
@@ -232,7 +232,7 @@ func TestCompressionWithMultipleBinaries(t *testing.T) {
 	for name := range checksums {
 		files = append(files, name)
 	}
-	
+
 	archiveInfo, err := fs.CompressFiles("", files)
 	require.NoError(t, err)
 
@@ -250,9 +250,9 @@ func TestCompressionWithMultipleBinaries(t *testing.T) {
 	for name, originalChecksum := range checksums {
 		restoredChecksum, err := calculateChecksum(filepath.Join(tmpDir, name))
 		require.NoError(t, err)
-		assert.Equal(t, originalChecksum, restoredChecksum, 
+		assert.Equal(t, originalChecksum, restoredChecksum,
 			"Binary %s should be identical after restore", name)
-		
+
 		// Test execution
 		cmd := exec.Command(filepath.Join(tmpDir, name), "--version")
 		_, err = cmd.CombinedOutput()
@@ -262,7 +262,7 @@ func TestCompressionWithMultipleBinaries(t *testing.T) {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				// Exit code 1 or 2 is usually "bad argument", which is fine
 				// Exit code > 128 usually means signal (segfault, etc), which is bad
-				assert.Less(t, exitErr.ExitCode(), 128, 
+				assert.Less(t, exitErr.ExitCode(), 128,
 					"Binary %s crashed with signal", name)
 			}
 		}
@@ -332,31 +332,31 @@ func TestCompressionConsistency(t *testing.T) {
 	// Run multiple compress/decompress cycles
 	for i := 0; i < 5; i++ {
 		t.Logf("Cycle %d", i+1)
-		
+
 		// Compress
 		archiveInfo, err := fs.CompressFiles("", []string{binaryName})
 		require.NoError(t, err)
-		
+
 		// Delete
 		err = os.Remove(testPath)
 		require.NoError(t, err)
-		
+
 		// Decompress
 		err = fs.DecompressFile(context.Background(), "", archiveInfo.Name())
 		require.NoError(t, err)
-		
+
 		// Verify checksum
 		checksum, err := calculateChecksum(testPath)
 		require.NoError(t, err)
-		assert.Equal(t, originalChecksum, checksum, 
+		assert.Equal(t, originalChecksum, checksum,
 			"Checksum should remain consistent after cycle %d", i+1)
-		
+
 		// Test execution
 		cmd := exec.Command(testPath, "test", fmt.Sprintf("cycle-%d", i+1))
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Binary should execute after cycle %d", i+1)
 		assert.Contains(t, string(output), fmt.Sprintf("cycle-%d", i+1))
-		
+
 		// Clean up archive for next cycle
 		os.Remove(filepath.Join(tmpDir, archiveInfo.Name()))
 	}

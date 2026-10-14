@@ -50,7 +50,7 @@ type BackupOperationRegistry struct {
 	// CRITICAL: Operation limits to prevent resource exhaustion with queuing support
 	maxConcurrentBackups  int
 	maxConcurrentRestores int
-	// QUEUING: Semaphores to handle waiting instead of immediate rejection  
+	// QUEUING: Semaphores to handle waiting instead of immediate rejection
 	backupSemaphore  chan struct{}
 	restoreSemaphore chan struct{}
 }
@@ -59,7 +59,7 @@ type BackupOperationRegistry struct {
 func NewBackupOperationRegistry() *BackupOperationRegistry {
 	maxBackups := 8
 	maxRestores := 8
-	
+
 	return &BackupOperationRegistry{
 		operations: make(map[string]*BackupOperation),
 		logger:     log.WithField("component", "backup_registry"),
@@ -89,13 +89,13 @@ func (r *BackupOperationRegistry) Register(parentCtx context.Context, backupID, 
 
 	// ATOMIC: Check if we need to wait (for accurate state reporting)
 	needsQueue := len(semaphore) >= cap(semaphore)
-	
+
 	// WAIT in queue until slot available or context cancelled
 	select {
 	case semaphore <- struct{}{}: // Successfully acquired slot
 		r.logger.WithFields(log.Fields{
-			"backup_id": backupID,
-			"type":      opType,
+			"backup_id":  backupID,
+			"type":       opType,
 			"was_queued": needsQueue,
 		}).Debug("acquired operation slot from queue")
 	case <-parentCtx.Done():
@@ -124,10 +124,10 @@ func (r *BackupOperationRegistry) Register(parentCtx context.Context, backupID, 
 	// Check if operation already exists (shouldn't happen with proper state management)
 	if existing, exists := r.operations[backupID]; exists {
 		r.logger.WithFields(log.Fields{
-			"backup_id":    backupID,
-			"existing_id":  existing.ID,
-			"new_id":       operationID,
-			"type":         opType,
+			"backup_id":   backupID,
+			"existing_id": existing.ID,
+			"new_id":      operationID,
+			"type":        opType,
 		}).Warn("backup operation already exists, replacing")
 	}
 
@@ -235,7 +235,7 @@ func (r *BackupOperationRegistry) Count() int {
 func (r *BackupOperationRegistry) GetQueueStatus() map[string]any {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	backupCount := 0
 	restoreCount := 0
 	for _, op := range r.operations {
@@ -246,18 +246,18 @@ func (r *BackupOperationRegistry) GetQueueStatus() map[string]any {
 			restoreCount++
 		}
 	}
-	
+
 	return map[string]any{
 		"backups": map[string]any{
-			"active":    backupCount,
-			"max":       r.maxConcurrentBackups,
-			"available": r.maxConcurrentBackups - backupCount,
+			"active":       backupCount,
+			"max":          r.maxConcurrentBackups,
+			"available":    r.maxConcurrentBackups - backupCount,
 			"queue_length": len(r.backupSemaphore),
 		},
 		"restores": map[string]any{
-			"active":    restoreCount,
-			"max":       r.maxConcurrentRestores,
-			"available": r.maxConcurrentRestores - restoreCount,
+			"active":       restoreCount,
+			"max":          r.maxConcurrentRestores,
+			"available":    r.maxConcurrentRestores - restoreCount,
 			"queue_length": len(r.restoreSemaphore),
 		},
 		"total_operations": len(r.operations),
@@ -325,7 +325,7 @@ func (r *BackupOperationRegistry) CancelAllForServer(serverID string) error {
 	defer r.mu.Unlock()
 
 	var cancelledOps []string
-	
+
 	for backupID, operation := range r.operations {
 		if operation.ServerID == serverID {
 			r.logger.WithFields(log.Fields{
@@ -337,13 +337,13 @@ func (r *BackupOperationRegistry) CancelAllForServer(serverID string) error {
 
 			// Cancel the context
 			operation.Cancel()
-			
+
 			// CRITICAL FIX: Release semaphore token BLOCKING (prevents leaks)
 			if operation.semaphoreToken != nil {
 				<-operation.semaphoreToken // BLOCKING receive to return token
 				r.logger.Debug("released semaphore slot for server deletion")
 			}
-			
+
 			// Remove from registry
 			delete(r.operations, backupID)
 			cancelledOps = append(cancelledOps, backupID)
@@ -352,9 +352,9 @@ func (r *BackupOperationRegistry) CancelAllForServer(serverID string) error {
 
 	if len(cancelledOps) > 0 {
 		r.logger.WithFields(log.Fields{
-			"server_id":        serverID,
-			"cancelled_count":  len(cancelledOps),
-			"cancelled_ops":    cancelledOps,
+			"server_id":       serverID,
+			"cancelled_count": len(cancelledOps),
+			"cancelled_ops":   cancelledOps,
 		}).Info("cancelled all backup operations for server deletion")
 	}
 

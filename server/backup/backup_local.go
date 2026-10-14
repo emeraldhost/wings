@@ -5,11 +5,8 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
-	"strings"
 
 	"emperror.dev/errors"
-	"github.com/apex/log"
 	"github.com/juju/ratelimit"
 	"github.com/mholt/archives"
 
@@ -20,8 +17,6 @@ import (
 
 type LocalBackup struct {
 	Backup
-	// foundPath overrides Path() for backward compatibility when locating existing backups
-	foundPath string
 }
 
 var _ BackupInterface = (*LocalBackup)(nil)
@@ -34,7 +29,6 @@ func NewLocal(client remote.Client, uuid string, ignore string) *LocalBackup {
 			Ignore:  ignore,
 			adapter: LocalBackupAdapter,
 		},
-		foundPath: "", // Initialize foundPath
 	}
 }
 
@@ -55,38 +49,20 @@ func LocateLocal(client remote.Client, uuid string) (*LocalBackup, os.FileInfo, 
 		}
 		return b, st, nil
 	}
-	
-	// BACKWARD COMPATIBILITY: Try other formats if current format not found
+
+	// BACKWARD COMPATIBILITY: uncompressed backups are stored as <uuid>.tar.
 	if os.IsNotExist(err) {
-		// Try all possible extensions for backward compatibility
-		possibleExtensions := []string{".tar.gz", ".tar"}
-		baseDir := config.Get().System.BackupDirectory
-		
-		for _, ext := range possibleExtensions {
-			backupPath := path.Join(baseDir, uuid+ext)
-			if st, err := os.Stat(backupPath); err == nil {
-				if st.IsDir() {
-					return nil, nil, errors.New("invalid archive, is directory")
-				}
-				
-				// Create backup instance with found path
-				backup := NewLocal(client, uuid, "")
-				// Override the path to the actually found file
-				backup.foundPath = backupPath
-				return backup, st, nil
+		tarPath := path.Join(config.Get().System.BackupDirectory, b.Uuid+".tar")
+		if st, terr := os.Stat(tarPath); terr == nil {
+			if st.IsDir() {
+				return nil, nil, errors.New("invalid archive, is directory")
 			}
+			b.foundPath = tarPath
+			return b, st, nil
 		}
 	}
-	
-	return nil, nil, err
-}
 
-// Path returns the path for this LocalBackup, considering foundPath override
-func (b *LocalBackup) Path() string {
-	if b.foundPath != "" {
-		return b.foundPath // Use discovered path for backward compatibility
-	}
-	return b.Backup.Path() // Use standard path generation
+	return nil, nil, err
 }
 
 // Remove removes a backup from the system.
@@ -144,22 +120,22 @@ func (b *LocalBackup) Restore(ctx context.Context, _ io.Reader, callback Restore
 	if writeLimit := int64(config.Get().System.Backups.WriteLimit * 1024 * 1024); writeLimit > 0 {
 		reader = ratelimit.Reader(f, ratelimit.NewBucketWithRate(float64(writeLimit), writeLimit))
 	}
-	
+
 	// Wrap reader in NopCloser to satisfy ReadCloser interface
 	readCloser := io.NopCloser(reader)
-	
+
 	// Auto-detect compression format and decompress
 	format, detectedReader, err := filesystem.DetectCompressionFormat(readCloser)
 	if err != nil {
 		return errors.WrapIf(err, "failed to detect backup compression format")
 	}
-	
+
 	decompressedReader, err := filesystem.CreateDecompressor(detectedReader, format)
 	if err != nil {
 		return errors.WrapIf(err, "failed to create decompressor for backup")
 	}
 	defer decompressedReader.Close()
-	
+
 	// Use the mholt/archives package to extract TAR archive
 	tarFormat := archives.Tar{}
 	if err := tarFormat.Extract(ctx, decompressedReader, func(ctx context.Context, f archives.FileInfo) error {
@@ -174,114 +150,4 @@ func (b *LocalBackup) Restore(ctx context.Context, _ io.Reader, callback Restore
 		return err
 	}
 	return nil
-}
-
-// CleanupBackupFilesForServer removes all local backup files associated with a server
-// This function is called during server deletion to prevent orphaned backup files
-func CleanupBackupFilesForServer(serverID string) error {
-	backupDir := config.Get().System.BackupDirectory
-	logger := log.WithFields(log.Fields{
-		"server_id":  serverID,
-		"backup_dir": backupDir,
-	})
-
-	// List all files in backup directory
-	files, err := os.ReadDir(backupDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			logger.Debug("backup directory does not exist, nothing to clean up")
-			return nil
-		}
-		return errors.WrapIf(err, "failed to read backup directory")
-	}
-
-	var removedFiles []string
-	var failedRemovals []string
-
-	// Iterate through all files and find ones belonging to this server
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		fileName := file.Name()
-		
-		// Check if this file belongs to the server by examining filename patterns
-		// Backup files are typically named: {backup-uuid}.{extension}
-		// We need to check if this is actually a backup file for our server
-		// This is a conservative approach - we only remove files that are clearly backup files
-		
-		// Skip files that don't look like backup files
-		if !isBackupFile(fileName) {
-			continue
-		}
-
-		// Extract backup UUID from filename (before first dot)
-		parts := strings.Split(fileName, ".")
-		if len(parts) < 2 {
-			continue // Not a valid backup file format
-		}
-
-		backupUUID := parts[0]
-		
-		// Skip if the UUID doesn't look valid (should be 36 characters for UUID)
-		if len(backupUUID) != 36 {
-			continue
-		}
-
-		filePath := filepath.Join(backupDir, fileName)
-		
-		// For safety, we should ideally check if this backup belongs to the server
-		// However, we don't have a reliable way to determine ownership without
-		// querying the panel or parsing backup metadata
-		// 
-		// For now, we use a conservative approach: only remove files if they match
-		// our known backup file patterns and are in the correct directory
-		
-		logger.WithField("file", fileName).Debug("found potential backup file, attempting removal")
-		
-		if err := os.Remove(filePath); err != nil {
-			logger.WithError(err).WithField("file", fileName).Error("failed to remove backup file")
-			failedRemovals = append(failedRemovals, fileName)
-		} else {
-			logger.WithField("file", fileName).Info("removed backup file")
-			removedFiles = append(removedFiles, fileName)
-		}
-	}
-
-	// Log summary
-	if len(removedFiles) > 0 {
-		logger.WithFields(log.Fields{
-			"removed_count": len(removedFiles),
-			"removed_files": removedFiles,
-		}).Info("cleaned up backup files for server")
-	}
-
-	if len(failedRemovals) > 0 {
-		logger.WithFields(log.Fields{
-			"failed_count": len(failedRemovals),
-			"failed_files": failedRemovals,
-		}).Warn("some backup files could not be removed")
-		return errors.New("failed to remove some backup files")
-	}
-
-	return nil
-}
-
-// isBackupFile checks if a filename looks like a backup file
-func isBackupFile(filename string) bool {
-	// Common backup file extensions
-	backupExtensions := []string{
-		".tar.gz", ".tar", ".gz",
-	}
-	
-	lowerName := strings.ToLower(filename)
-	
-	for _, ext := range backupExtensions {
-		if strings.HasSuffix(lowerName, ext) {
-			return true
-		}
-	}
-	
-	return false
 }

@@ -18,16 +18,16 @@ const (
 type CompressionAdapter interface {
 	// Format returns the compression format identifier
 	Format() CompressionFormat
-	
+
 	// Extension returns the file extension for this format
 	Extension() string
-	
+
 	// ContentTypes returns the list of valid MIME types for this format
 	ContentTypes() []string
-	
+
 	// IsSupported checks if the format is supported for backup operations
 	IsSupported() bool
-	
+
 	// Description returns a human-readable description of the format
 	Description() string
 }
@@ -88,12 +88,12 @@ func NewCompressionRegistry() *CompressionRegistry {
 	registry := &CompressionRegistry{
 		adapters: make(map[CompressionFormat]CompressionAdapter),
 	}
-	
+
 	// Register default compression formats
 	registry.Register(&gzipAdapter{})
 	registry.Register(&tarAdapter{})
 	registry.Register(&noneAdapter{})
-	
+
 	return registry
 }
 
@@ -113,7 +113,7 @@ func (r *CompressionRegistry) GetByContentType(contentType string) (CompressionA
 	// Normalize content type
 	ctBase := strings.Split(contentType, ";")[0]
 	ctBase = strings.TrimSpace(strings.ToLower(ctBase))
-	
+
 	for _, adapter := range r.adapters {
 		for _, ct := range adapter.ContentTypes() {
 			if ct == ctBase {
@@ -121,20 +121,20 @@ func (r *CompressionRegistry) GetByContentType(contentType string) (CompressionA
 			}
 		}
 	}
-	
+
 	return nil, false
 }
 
 // GetByExtension returns the adapter that matches the given file extension
 func (r *CompressionRegistry) GetByExtension(extension string) (CompressionAdapter, bool) {
 	extension = strings.ToLower(extension)
-	
+
 	for _, adapter := range r.adapters {
 		if adapter.Extension() == extension {
 			return adapter, true
 		}
 	}
-	
+
 	return nil, false
 }
 

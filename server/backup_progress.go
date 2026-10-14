@@ -6,26 +6,26 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/apex/log"
 	"github.com/Rene-Roscher/wings/internal/progress"
+	"github.com/apex/log"
 )
 
 // SimpleProgressTracker - ultra-lightweight progress tracking with ZERO overhead
 type SimpleProgressTracker struct {
-	server       *Server
-	backupID     string
-	backupType   string
-	progress     *progress.Progress
-	lastSent     int64 // Last percentage sent
-	lastTime     int64 // Last time sent (nanoseconds)
-	lastBytes    int64 // Last bytes value sent (for detecting changes at 100%)
-	isS3         bool  // Whether this is an S3 backup (needs 80/20 split)
-	archiveSize  int64 // Size of archive (for S3 80/20 calculation)
-	
+	server      *Server
+	backupID    string
+	backupType  string
+	progress    *progress.Progress
+	lastSent    int64 // Last percentage sent
+	lastTime    int64 // Last time sent (nanoseconds)
+	lastBytes   int64 // Last bytes value sent (for detecting changes at 100%)
+	isS3        bool  // Whether this is an S3 backup (needs 80/20 split)
+	archiveSize int64 // Size of archive (for S3 80/20 calculation)
+
 	// Context-aware goroutine management
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // BackupProgressUpdate represents the data sent over WebSocket
@@ -56,7 +56,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 	lastSent := atomic.LoadInt64(&spt.lastSent)
 
 	// SINGLE THROTTLING CHECK: Only send events maximum every 250ms to prevent WebSocket flooding
-	const throttleIntervalNanos = 250_000_000 // 250ms in nanoseconds  
+	const throttleIntervalNanos = 250_000_000 // 250ms in nanoseconds
 	shouldSendByTime := (now - lastTime) >= throttleIntervalNanos
 
 	// Check if this is initial progress (0%)
@@ -65,7 +65,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 	if total > 0 {
 		// Standard percentage calculation first
 		rawPercentage := int((written * 100) / total)
-		
+
 		// S3 SPECIAL CASE: Scale to 80% during archive, then 80-100% during upload
 		if spt.isS3 {
 			if spt.archiveSize == 0 {
@@ -99,7 +99,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 			percentage = rawPercentage
 		}
 		percentage = min(100, percentage)
-		
+
 		// Send on percentage increase AND time throttle (OR initial)
 		percentageChanged := percentage > int(lastSent)
 		// Also send if bytes changed (for updates within same percentage)
@@ -111,10 +111,10 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 			atomic.StoreInt64(&spt.lastBytes, int64(written))
 		}
 	} else {
-		// Byte mode - show progress in 1MB chunks with time throttling  
+		// Byte mode - show progress in 1MB chunks with time throttling
 		percentage = 0 // Use 0% for unknown total instead of -1
 		lastMB := lastSent
-		currentMB := written / (1024 * 1024) // 1MB chunks
+		currentMB := written / (1024 * 1024)             // 1MB chunks
 		dataChanged := currentMB > lastMB || written > 0 // Include any progress
 		shouldSend = (dataChanged && shouldSendByTime) || isInitialProgress
 		if shouldSend {
@@ -124,7 +124,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 
 	// ALWAYS send initial progress (0%) and final progress (100%) - but only ONCE!
 	isFinalProgress := total > 0 && percentage >= 100 && atomic.LoadInt64(&spt.lastSent) < 100
-	
+
 	if shouldSend || isFinalProgress {
 		atomic.StoreInt64(&spt.lastTime, now)
 		if percentage >= 0 {
@@ -139,7 +139,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 			default:
 			}
 		}
-		
+
 		// CRITICAL FIX: Send events SYNCHRONOUSLY during normal progress
 		// Only the FINAL events truly need to be async to avoid blocking restore completion
 		// Regular progress events are fast enough to send inline
@@ -163,7 +163,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 						return
 					}
 				}()
-				
+
 				// Final check before send
 				if spt.ctx != nil {
 					select {
@@ -172,7 +172,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 					default:
 					}
 				}
-				
+
 				spt.server.Events().Publish(BackupProgressEvent, update)
 				spt.server.Log().WithField("backup_id", spt.backupID).
 					WithField("percentage", percentage).
@@ -183,7 +183,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 		} else {
 			// Send normal progress events synchronously - they're fast!
 			spt.server.Events().Publish(BackupProgressEvent, update)
-			
+
 			// Log initial event for debugging
 			if isInitialProgress {
 				spt.server.Log().WithField("backup_id", spt.backupID).
@@ -197,7 +197,7 @@ func (spt *SimpleProgressTracker) CheckProgress() {
 
 // NewSimpleProgressTracker creates a progress tracker with proper lifecycle management
 func NewSimpleProgressTracker(ctx context.Context, server *Server, backupID, backupType string, progress *progress.Progress) *SimpleProgressTracker {
-	progCtx, cancel := context.WithCancel(ctx)
+	progCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored on the tracker and called by Close()
 	return &SimpleProgressTracker{
 		server:     server,
 		backupID:   backupID,
@@ -222,7 +222,7 @@ func (spt *SimpleProgressTracker) Close() {
 		spt.cancel()
 		spt.cancel = nil // Prevent double-cancel
 	}
-	
+
 	// Wait for any pending CheckProgress goroutines with SHORT timeout
 	// These are fire-and-forget event sends, we don't need to wait long
 	done := make(chan struct{})
@@ -230,7 +230,7 @@ func (spt *SimpleProgressTracker) Close() {
 		spt.wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		// All goroutines finished cleanly
@@ -258,14 +258,14 @@ func (spt *SimpleProgressTracker) SendFinalProgress(success bool) {
 	}
 
 	spt.server.Log().WithFields(log.Fields{
-		"backup_id":     spt.backupID,
-		"backup_type":   spt.backupType,
-		"success":       success,
-		"percentage":    percentage,
-		"written":       written,
-		"total":         total,
-		"is_restoring":  spt.server.IsRestoring(),
-		"server_state":  spt.server.Environment.State(),
+		"backup_id":    spt.backupID,
+		"backup_type":  spt.backupType,
+		"success":      success,
+		"percentage":   percentage,
+		"written":      written,
+		"total":        total,
+		"is_restoring": spt.server.IsRestoring(),
+		"server_state": spt.server.Environment.State(),
 	}).Info("SENDING FINAL PROGRESS EVENT")
 
 	update := BackupProgressUpdate{
@@ -286,7 +286,7 @@ func (spt *SimpleProgressTracker) SendFinalProgress(success bool) {
 		default:
 		}
 	}
-	
+
 	// Send the final event directly - this is fast enough
 	spt.server.Events().Publish(BackupProgressEvent, update)
 
