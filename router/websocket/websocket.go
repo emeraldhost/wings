@@ -36,6 +36,8 @@ const (
 	PermissionReceiveInstall   = "admin.websocket.install"
 	PermissionReceiveTransfer  = "admin.websocket.transfer"
 	PermissionReceiveBackups   = "backup.read"
+	PermissionReceiveActivity  = "activity.read"
+	PermissionReceiveFiles     = "file.read"
 )
 
 // writeTimeout is how long a single write to a websocket may take before the
@@ -178,6 +180,16 @@ func (h *Handler) SendJson(v Message) error {
 		if !j.HasPermission(PermissionReceiveBackups) {
 			return nil
 		}
+	}
+
+	// Activity events carry file paths and remote download URLs, so they need
+	// the same permissions the Panel requires to read the activity log and the
+	// server's files.
+	if v.Event == server.ActivityEvent && !j.HasPermission(PermissionReceiveActivity) {
+		return nil
+	}
+	if v.Event == server.DownloadProgressEvent && !j.HasPermission(PermissionReceiveFiles) {
+		return nil
 	}
 
 	// If we are sending transfer output, only send it to the user if they have the required permissions.

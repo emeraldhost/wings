@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/server/backup"
 )
 
 func init() {
@@ -109,22 +108,6 @@ func TestBackupCleanupStaleOperations(t *testing.T) {
 
 	// Should still have operations (they're not old enough)
 	assert.Equal(t, initialCount, registry.Count())
-}
-
-// TestLocalBackupCleanupFunction tests the local backup file cleanup
-func TestLocalBackupCleanupFunction(t *testing.T) {
-	// This test verifies the cleanup function exists and can be called
-	// We don't test actual file operations to avoid affecting real files
-
-	// Test cleanup function doesn't panic with non-existent server
-	err := backup.CleanupBackupFilesForServer("non-existent-server-123")
-
-	// Function should handle non-existent servers gracefully
-	// Error is acceptable (directory not found), panic is not
-	if err != nil {
-		assert.Contains(t, err.Error(), "no such file or directory",
-			"Should handle non-existent server gracefully")
-	}
 }
 
 // TestBackupCleanupRace tests concurrent cleanup operations

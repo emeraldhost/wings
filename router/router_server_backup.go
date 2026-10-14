@@ -299,13 +299,16 @@ func postServerRestoreBackup(c *gin.Context) {
 	// parse over the contents as we go in order to restore it to the server.
 	//
 	// backupRestoreHttpClient enforces SSRF protections: it refuses to connect to
-	// private/internal/loopback addresses (and the explicitly blocked ranges) unless
+	// private/internal/loopback addresses (see internal/network) unless
 	// the destination is permitted via the RestoreHostAllowlist configuration option.
 	httpClient := backupRestoreHttpClient()
-	logger.WithField("download_url", data.DownloadUrl).Info("downloading backup from remote location...")
-	// Use proper timeout to prevent indefinite hangs during backup downloads.
-	// 2 hour timeout should be sufficient for most backup file sizes while preventing
-	// resource exhaustion from stuck connections.
+	// Only log the host: the download URL is presigned and its query string
+	// carries the signature.
+	downloadHost := ""
+	if u, err := url.Parse(data.DownloadUrl); err == nil {
+		downloadHost = u.Host
+	}
+	logger.WithField("download_host", downloadHost).Info("downloading backup from remote location...")
 	req, err := http.NewRequestWithContext(s.Context(), http.MethodGet, data.DownloadUrl, nil)
 	if err != nil {
 		logger.WithField("error", err).Error("failed to create HTTP request for backup download")

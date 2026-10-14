@@ -482,11 +482,49 @@ func (dl *Download) Execute() error {
 
 	// Write the file while tracking the progress, Write will check that the
 	// size of the file won't exceed the disk limit.
-	r := io.TeeReader(res.Body, dl.counter(res.ContentLength))
-	if err := dl.server.Filesystem().Write(p, r, res.ContentLength, 0o644); err != nil {
+	// A response without a known length (chunked) is never checked against
+	// maxDownloadSize above, so cap the body itself.
+	body := &maxSizeReader{r: res.Body, remaining: maxDownloadSize}
+	r := io.TeeReader(body, dl.counter(res.ContentLength))
+	if hasKnownSize {
+		err = dl.server.Filesystem().Write(p, r, res.ContentLength, 0o644)
+	} else {
+		// Write copies nothing for an unknown (-1) size; WriteFrom counts each
+		// write against the disk limit and removes the file if it fails.
+		_, err = dl.server.Filesystem().WriteFrom(p, r)
+	}
+	if err != nil {
+		if body.exceeded {
+			return errors.Wrap(ErrFileTooLarge, fmt.Sprintf("file exceeds maximum %d bytes", maxDownloadSize))
+		}
 		return errors.WrapIf(err, "downloader: failed to write file to server directory")
 	}
 	return nil
+}
+
+// maxSizeReader returns ErrFileTooLarge once more than remaining bytes have
+// been read, instead of silently truncating like io.LimitReader.
+type maxSizeReader struct {
+	r         io.Reader
+	remaining int64
+	exceeded  bool
+}
+
+func (m *maxSizeReader) Read(p []byte) (int, error) {
+	if m.remaining < 0 {
+		m.exceeded = true
+		return 0, ErrFileTooLarge
+	}
+	if int64(len(p)) > m.remaining+1 {
+		p = p[:m.remaining+1]
+	}
+	n, err := m.r.Read(p)
+	m.remaining -= int64(n)
+	if m.remaining < 0 {
+		m.exceeded = true
+		return n, ErrFileTooLarge
+	}
+	return n, err
 }
 
 // Cancel cancels a running download and frees up the associated resources. If a file is being
