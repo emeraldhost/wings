@@ -4,8 +4,8 @@ This file tracks **which changes are our own** (EmeraldHost-specific) versus ups
 [`pterodactyl/wings`](https://github.com/pterodactyl/wings). Use it during upgrades so
 our customizations are **not accidentally reverted** when pulling in upstream changes.
 
-- **Baseline for this comparison:** upstream tag **`v1.13.3`** (`6987d5e`)
-- **Last reviewed:** 2026-08-14
+- **Baseline for this comparison:** upstream tag **`v1.13.4`** (`747bc43`)
+- **Last reviewed:** 2026-10-14
 - **Module path:** this fork is `github.com/Rene-Roscher/wings` (upstream is
   `github.com/pterodactyl/wings`). Version is injected at build time via ldflags
   (`-X .../system.Version=<tag>`); `system/const.go` stays `develop` and is **not** a divergence.
@@ -27,6 +27,11 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 > v1.13.2 and v1.13.3 were exceptions: both stayed clear of the backup subsystem and merged
 > (nearly) conflict-free — see §4. The v1.13.3 conflicts were only our rewritten
 > `release.yaml` (keep ours, see §1.4) and the module-renamed import block of `server/install.go`.
+>
+> v1.13.4 was the rule again: a broad hardening release (153 files) with 24 conflicted files,
+> including the whole backup/restore/archive path. It was merged the v1.13.1 way — keep ours,
+> graft upstream. Rows marked *(v1.13.4)* in §1 record where fork and upstream code now
+> interlock; §4 lists what v1.13.4 brought in as plain upstream code.
 
 ---
 
@@ -54,7 +59,13 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | `server/server.go` | `Server.backingUp *AtomicBool` (+ init), `AtomicStateTransition` + `ApplyAtomicStateTransition()`, `CleanupForDestroy()` cancels in-flight ops + cleans orphaned backup files, `PublishActivity()`. |
 | `server/install.go` | `IsBackingUp()` / `SetBackingUp()`. (Note: `IsInProtectedState()` was deliberately **not** extended with `backingUp`.) |
 | `server/power.go`, `server/errors.go` | `HandlePowerAction()` also blocks while `IsBackingUp()`, returning new sentinel `ErrServerIsBackingUp`. |
-| `environment/environment.go` (+ docker state whitelist) | New states `backup`, `restore`, `backup_queued`, `restore_queued`. |
+| `environment/environment.go` (+ docker state whitelist) | New states `backup`, `restore`, `backup_queued`, `restore_queued`. The `switch` in `environment/docker/environment.go` `SetState()` must list **all four** (guarded by `environment/docker/state_test.go`); the queued states were only added to it in the v1.13.4 merge (see §3). |
+| `router/router_server_backup.go` goroutines | The registry cleanup `defer` (`registry.Complete` + `cancel`) is registered **directly after** a successful `Register()`, before the `wasQueued` `SetState`; both restore goroutines also have a top-level `recover`. Keep that order on merge, otherwise a panic leaks a registry slot until the 8 h stale cleanup. |
+| `server/backup.go` `DownloadSizeContextKey` | Typed context key used by the S3 restore path to pass the download size to `RestoreBackupWithContext` (replaced the old `"download_size"` string key). `RestoreBackupWithContext` asks `Environment.IsRunning()` instead of stopping the container when the state is `restore_queued`. |
+| `server/backup.go` restore *(v1.13.4)* | `RestoreBackup(b, reader, truncate)` / `RestoreBackupWithContext(ctx, b, reader, truncate)` carry upstream's new `truncate` flag: `TruncateRootDirectory` runs **inside** the restore, after the server has stopped and after compression detection (an undetectable S3 stream no longer wipes files first); the router no longer truncates before locating the backup. Upstream's suspend/unsuspend toggling was dropped by upstream itself (it clobbered Panel suspensions); start protection is `SetRestoring(true)` **before** `WaitForStop` (also cancels SFTP sessions). `restoreEntry` merges both sides: fork's mode-preserving `MkdirAll`+`Chown`+`Chtimes` for directories, upstream's symlink recreation and skipping of hard links/devices/special files. |
+| `server/backup/backup.go` *(v1.13.4)* | Fork patch on upstream code: `validateIdentifier()` only writes `b.Uuid` when it changes, and `Details()` validates once before spawning its goroutines — a `-race` failure surfaced by upstream's new restore test, because the fork's restore calls `Details()`. |
+| `server/backup/backup_s3.go` *(v1.13.4)* | Upstream's unconditional `defer s.Remove()` was **not** taken (it would delete failed uploads the fork keeps for retry); upstream's error-checked removal is grafted into the success branch only. |
+| `server/backup_restore_test.go` *(v1.13.4)* | Upstream suite; only its `restoreTestEnvironment` double gained no-op `SetState()` / `IsRunning()` because the fork's restore drives environment state. Assertions unchanged. |
 
 **Progress & activity over WebSocket**
 
@@ -73,10 +84,10 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 | `server/backup/compression.go` | **Fork-new.** `CompressionRegistry` (gzip/tar/none) + `IsValidBackupContentType()` — used by the router content-type gate; without it the router won't compile. |
 | `server/backup/backup_local.go` | `foundPath` + extension-probing `LocateLocal` (`.tar.gz/.tar`), auto-detecting `Restore`, `CleanupBackupFilesForServer`. |
 | `server/backup/backup_s3.go` | Two-phase backup reuse, success-flag cleanup (failed uploads kept for retry), orphaned-part logging, upload progress (`ProgressReader`/`ProgressTracker`), custom HTTP/1.1 transport, part-retry with 100MB memory-buffer threshold / 5GB cap, `Restore()` expects an **already-decompressed** tar stream. |
-| `server/filesystem/archive.go` | Archiver no longer skips directory entries → **empty directories are preserved** in archives. `createCompressor()` refactor. |
+| `server/filesystem/archive.go` | Archiver no longer skips directory entries → **empty directories are preserved** in archives. `createCompressor()` refactor. *(v1.13.4)* Upstream's `compileIgnore()` + `ignoreMatchBudget`, `Readlinkat`-based symlink reading and `*[]byte` buffer pool are taken; the ignore compilation runs **before** `createCompressor()` so an invalid ignore list fails before anything is written. |
 | `server/filesystem/archive_restore.go` | **Fork-new.** `DetectCompressionFormat` (magic bytes) + `CreateDecompressor`, wired into restore. |
 | `server/filesystem/compress_binary_test.go`, `server/backup/*_test.go`, `router/content_type_test.go`, `server/backup_*_test.go` | Fork-new regression suites for the above. Keep them passing. |
-| `server/filesystem/archive_test.go` + `archive_stream_test.go` | **File layout divergence, not new behavior.** Our `archive_test.go` was replaced wholesale with tests for the fork-only `archive_restore.go`; upstream's `TestArchive_Stream` lives in `archive_stream_test.go` instead. Upstream edits to `archive_test.go` therefore land in the *wrong* file on merge — port them into `archive_stream_test.go` by hand. |
+| `server/filesystem/archive_test.go` + `archive_stream_test.go` | **File layout divergence, not new behavior.** Our `archive_test.go` was replaced wholesale with tests for the fork-only `archive_restore.go`; upstream's `TestArchive_Stream` lives in `archive_stream_test.go` instead. Upstream edits to `archive_test.go` therefore land in the *wrong* file on merge — port them into `archive_stream_test.go` by hand. *(v1.13.4: upstream's two new ignore-pattern cases were ported there; `getFiles` now `continue`s on directory entries instead of returning, because of the empty-dir preservation above.)* |
 
 **Router API (fork-only endpoints + customized handlers)**
 
@@ -84,6 +95,9 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 |------|------|
 | `router/router.go` | Fork-only routes `GET /backup/operations` and `DELETE /backup/:backup/cancel`. |
 | `router/router_server_backup.go` | `cancelServerBackup` + `getServerBackupOperations` (fork-only). `postServerBackup` / `postServerRestoreBackup` rewritten: 409 concurrency guards, registry queueing, timeouts, panic recovery, retry, S3 download progress, and content-type via `backup.IsValidBackupContentType` (gzip+tar) instead of upstream's gzip-only check. |
+| `router/router_server_transfer.go` *(v1.13.4)* | Fork 409 guards (`IsBackingUp()` / `IsRestoring()`) run **before** upstream's new atomic `StartTransferring()` claim. Order matters: after it, a rejected request would leave `transferring=true` stuck. (Gap, pre-existing: `StartTransferring()` itself does not check `IsBackingUp()`.) |
+| `router/websocket/websocket.go` `SendJson` | Fork-wider `backup.read` gate: `BackupCompletedEvent`, `BackupRestoreCompletedEvent` (prefix match) **and** `BackupProgressEvent`. Rewritten in v1.13.4 onto upstream's single `validJwt()` token; everything else (write lock + deadline, `SendThrottled`, `SendClose`, `OnAuthenticated`) is upstream. `DownloadProgressEvent` / `ActivityEvent` are forwarded without a permission check (fork behaviour, unchanged). |
+| `router/downloader/downloader.go` | Fork redirect-following loop (max 10 hops, each through the SSRF-checked dialer), `maxDownloadSize` (15 GB) / `ErrFileTooLarge`, strict `sanitizeFilename` allowlist on header/user/URL filenames (stricter than upstream: rejects spaces and dotfiles), WebSocket progress events. *(v1.13.4)* Upstream's dialer/`RemoteDownloadAllowlist` SSRF hardening is taken; its `%w` error wrapping is grafted into the fork loop and the `Content-Disposition` name is reduced with `filepath.Base(filepath.Clean("/"+v))` before `sanitizeFilename`. |
 
 ### 1.3 SFTP activity streaming
 
@@ -102,7 +116,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 |------|------|
 | `.gitignore` | Fork-added `.claude-flow/`, `.hive-mind/`, `CLAUDE.md`. Upstream will never add these — keep on merge. |
 | `Makefile`, `Dockerfile` | Our build settings (with the renamed module path). |
-| `.github/workflows/{release,binary,docker}.yaml` | **Fork-specific release pipeline — always keep ours.** Upstream releases by hand: a human pushes a `v*` tag, `release.yaml` cuts a draft, a human publishes it. We release automatically from `develop` instead, and the version is derived from the newest **upstream** tag that is an ancestor of `develop` — so our releases always carry the upstream version number. Fork-only releases between upstream versions append a fourth component (`v1.13.3.1`), cut by dispatching `release.yaml` with `fork_revision`; the automatic path never does this. Upstream's `release.yaml` has diverged beyond recognition; do not merge it (v1.13.3's `c57c519` CDN-manifest notification was deliberately dropped — it notifies pterodactyl's own CDN repo). See the header comment in `release.yaml` for the full flow and recovery steps. |
+| `.github/workflows/{release,binary,docker}.yaml` | **Fork-specific release pipeline — always keep ours.** Upstream releases by hand: a human pushes a `v*` tag, `release.yaml` cuts a draft, a human publishes it. We release automatically from `develop` instead, and the version is derived from the newest **upstream** tag that is an ancestor of `develop` — so our releases always carry the upstream version number. Fork-only releases between upstream versions append a fourth component (`v1.13.3.1`), cut by dispatching `release.yaml` with `fork_revision`; the automatic path never does this. Upstream's `release.yaml` has diverged beyond recognition; do not merge it (v1.13.3's `c57c519` CDN-manifest notification was deliberately dropped — it notifies pterodactyl's own CDN repo). See the header comment in `release.yaml` for the full flow and recovery steps. Upstream action/toolchain bumps are still grafted by hand where they apply to our jobs (v1.13.4: Go 1.27.2 + `setup-go` v7 in `binary.yaml` — required since `go.mod` now says `go 1.26` — `docker/login-action` v4 in `release.yaml`, `docker/build-push-action` v7 in `docker.yaml`). |
 
 ---
 
@@ -131,6 +145,7 @@ much as bugs/concerns in our own additions, worth fixing rather than defending o
 | **Committed binaries** | `wings-debug`, `wings-fixed`, `wings-test` (~41 MB each) and `dist/wings_test` (~28 MB) are committed build artifacts (~150 MB total), not gitignored. Repo bloat / accidental commits. |
 | **Backup cleanup scope** | `cleanupBackupFiles` (server.go) and `CleanupBackupFilesForServer` (backup_local.go) match backup files by **filename pattern only** and do **not** filter by the server's ID. Since the backup directory is shared, deleting one server can remove **other** servers' local backups. |
 | **`checksum_type` label** | `server/backup.go` emits `"sha256"` in most events but still `"sha1"` in the panel-notify-failure success branch. Reconcile the labels (actual algorithm is sha256). |
+| **Queued states crashed the router (fixed in the v1.13.4 merge)** | Up to v1.13.3 the docker `SetState()` whitelist did not contain `backup_queued`/`restore_queued`, so every backup/restore that had to wait for a registry slot panicked in the router goroutine (latent crash; restores had no `recover` at all, so a queued restore crashed Wings) and leaked its registry slot. Fixed during the v1.13.4 merge: whitelist extended, cleanup `defer` moved before the queued `SetState`, top-level `recover` added to both restore goroutines, and the restore stop-wait no longer tries to stop an offline container just because the state is `restore_queued`. Kept here as a reminder to re-check after merges that touch these files. |
 | **`validateBackupContent`** | Fails a backup on any server-vs-archive file/dir count mismatch (can race a live server writing files), and computes a full SHA-256 over the **entire server tree and backup file** purely for a debug log line (perf cost on large servers). |
 
 ---
@@ -149,12 +164,15 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 | `router/tokens/websocket.go` → `isDenylisted()`, and `Denylisted()` on `FilePayload` / `BackupPayload` / `UploadPayload` (+ their new `user_uuid` claim) | **Upstream v1.13.2** (`28af6dd`, "update token validation"). Revocation checking was extracted out of `WebsocketPayload.Denylisted()` into a shared `isDenylisted()` and applied to the backup-download, file-download and file-upload one-time tokens, which previously only checked `IsUniqueRequest()`/scope. Also tightened `Before(t)` → `!After(t)`, so a token issued in the same second as the revocation is now denied. All four files are byte-identical to upstream — **keep them that way**. |
 | `router/tokens/denylist_test.go` | **Upstream v1.13.2**, unmodified. Covers the four payload types above. Not a fork suite. |
 | `router/router_download.go`, `router/router_server_files.go` → the `token.Denylisted() \|\|` guards | **Upstream v1.13.2** call sites. The surrounding files *are* fork-modified (module rename + activity logging), so these three one-liners are easy to lose in a conflict resolution — check they survive. |
-| `router/router_server_backup.go` SSRF cluster — `backupRestoreHttpClient`, `validateBackupDownloadUrl`, `parseBackupUuid`, `isBlockedBackupRestoreIP`, `isExplicitlyBlockedBackupRestoreIP`, `isAllowedBackupRestoreDestination`, `isSupportedBackupRestoreContentType`, `blockedBackupRestorePrefixes`, `backupDownloadError` | **Upstream v1.13.1** backup-restore SSRF hardening. The **only** fork edit in this cluster: the restore handler calls `backup.IsValidBackupContentType` instead of `isSupportedBackupRestoreContentType` (the latter is retained only for upstream parity + its test). |
+| `router/router_server_backup.go` SSRF cluster — `backupRestoreHttpClient`, `validateBackupDownloadUrl`, `parseBackupUuid`, `isBlockedBackupRestoreIP`, `isAllowedBackupRestoreDestination`, `isSupportedBackupRestoreContentType`, `backupDownloadError` | **Upstream v1.13.1** backup-restore SSRF hardening; since **v1.13.4** the IP checks delegate to `internal/network` (`IsInternal` / `IsAllowed`) and `blockedBackupRestorePrefixes` / `isExplicitlyBlockedBackupRestoreIP` are gone upstream — do not resurrect them. The **only** fork edit in this cluster: the restore handler calls `backup.IsValidBackupContentType` instead of `isSupportedBackupRestoreContentType` (the latter is retained only for upstream parity + its test). |
 | `config/config.go` → `Backups.RestoreHostAllowlist` | **Upstream v1.13.1.** Pairs with the SSRF allowlist above. Not a fork field. |
 | `server/backup/backup.go` → `validateIdentifier()` / `normalizedIdentifier()` (+ `Path()` `path.Base` fallback) | **Upstream v1.13.1** UUID hardening. The fork uses them unchanged. |
 | `system/const.go` | Byte-identical to upstream (`Version = "develop"`). |
 | `.github/FUNDING.yaml` (`github: [pterodactyl]`) | **Upstream default, unchanged** (`git diff 28af6dd HEAD` is empty). Stale for a fork (sponsorship points at upstream) but NOT our change — clean it up if desired, don't track it as a divergence. |
 | `.github/workflows/release.yaml` release-bot identity (`ci@pterodactyl.io` / `Pterodactyl CI`) | **Upstream default, unchanged.** Upstream's release.yaml already sets this identity. Not our divergence. |
+| `internal/network/*` (`LimitListener`, address/allowlist helpers), SFTP connection limits in `sftp/server.go`, websocket write lock/deadline/throttling, `server/filesystem/ignore.go` (`ValidateIgnore`, ignore limits), `server/mounts.go` mount validation, `system/locker.go` `ErrLockerDestroyed`, `internal/cron/delivery.go`, `internal/ufs` link-containment work, `server/filesystem/compress.go` rewrite (and removal of `archiverext/`), `server/listeners.go`, `router/websocket/listeners.go` | **Upstream v1.13.4** hardening, module rename only. `sftp/server.go`, `server/listeners.go`, `router/websocket/listeners.go`, `server/filesystem/{compress,errors}.go` are byte-identical to upstream apart from imports — keep them that way. The ~60 new `*_test.go` files of v1.13.4 are upstream suites, not fork suites. |
+| `wings.go` | Upstream v1.13.4 dropped the deprecated `rand.Seed`; the file is upstream apart from the import path. |
+| `.github/workflows/lint.yaml`, `.golangci.yml` | **Upstream v1.13.4**, adopted unchanged: golangci-lint v2 (standard linters + `gosec`, `gofmt` formatter) on push/PR to `develop`. The fork adds **no** `exclusions.rules`; fork findings were fixed in code, and the few deliberate ones carry a targeted `//nolint:gosec // <reason>` comment (`server/backup.go` `os.Open` of wings-built backup paths, `server/backup_progress.go` `context.WithCancel` whose cancel is stored on the tracker). Keep it that way: no disabling linters or the formatter for fork code. |
 
 > ⚠️ **Panel coupling introduced by v1.13.2.** `isDenylisted()` **fails closed**: a token with no
 > `iat`, no `server_uuid` or no `user_uuid` is rejected outright. The `user_uuid` claim is new in
@@ -162,3 +180,14 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 > puts `user_uuid` into those JWTs. Against an older Panel every such request returns
 > `404 "The requested resource was not found on this server."` — deploy Panel **before** Wings,
 > and if downloads/uploads start 404-ing after a Wings upgrade, this is the first thing to check.
+
+---
+
+## 5. Upgrade merge checklist
+
+1. `git merge <upstream-tag>` on an `upgrade-<version>` branch; resolve per §1 (backup/archiver areas: keep ours, graft upstream fixes).
+2. Rename leaked imports: `github.com/pterodactyl/wings` → `github.com/Rene-Roscher/wings` in every `.go` file (new upstream files arrive with the old path).
+3. **Run `gofmt -w` (or `goimports -w`) on the renamed files.** The rename changes import sort order (`github.com/Rene-Roscher/...` sorts before `github.com/apex`/`gin-gonic`/...), so files that upstream left gofmt-clean are no longer clean after the sed. On Windows, check against an LF export of the index (`git -c core.autocrlf=false checkout-index -a --prefix=<tmp>/` then `gofmt -l <tmp>`), since the CRLF working tree reports every file.
+4. `go build ./...`, `go vet ./...`, `go test -race ./...` (Linux / `GOOS=linux`).
+5. `golangci-lint run ./...` with the version pinned in `lint.yaml` (currently v2.11.4) must report 0 issues **before** opening the upgrade PR, otherwise the Lint workflow fails on the PR and on `develop`.
+6. Update this file (baseline tag, §4 for adopted upstream code, §3 for anything fixed) and the changelog.

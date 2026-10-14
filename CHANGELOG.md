@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.13.4
+### Security
+* Broad upstream hardening release (incl. advisory GHSA-8m75-v66f-m43j): file and archive operations are contained against symlink/hard-link escapes, ignore lists (`.pteroignore`, backup ignore) are validated and size/time-limited, decompression was rewritten, and quota/disk-usage accounting no longer follows links.
+* Remote file downloads (`pull`) resolve and dial through an SSRF-checked dialer; private/internal destinations are blocked unless listed in the new `api.remote_download_allowlist`. Backup-restore downloads use the same network checks.
+* SFTP gains connection limits: handshake timeout, per-user connection cap and per-IP cap on concurrently authenticating connections.
+* WebSocket and HTTP API: serialized writes with deadlines, throttled sends, and stricter request/upload handling.
+* Configuration updates sent by the Panel can now only change the Panel-owned values (uuid, token, API host/port/SSL, upload limit, SFTP port, debug); everything else in `config.yml` stays under the node operator's control.
+
+### Fixed
+* Backup restores no longer suspend/unsuspend the server, so a Panel-side suspension is no longer cleared by a restore. The server is protected from starting via the restoring flag instead.
+* "Truncate directory" on restore now happens inside the restore after the server has stopped, rather than before the backup was even located — a missing backup or an unreadable S3 stream no longer leaves the server with deleted files.
+* Restores recreate symlinks as symlinks and skip hard links, devices and other special files instead of writing them as regular files.
+* Backups and restores that had to wait in the queue (more than 8 concurrent operations on a node) crashed Wings or leaked their queue slot, because the queued states were rejected by the container state check. Queued operations now work as intended.
+* The server environment is no longer synced twice on start, and the "server started" console line can no longer be missed.
+
+### Added
+* `system.sftp.max_connections_per_user` (default 32) and `system.sftp.max_authenticating_connections_per_ip` (default 16 — raise it if clients connect through a proxy).
+* `api.remote_download_allowlist` — hostnames, IPs or CIDR ranges that remote file downloads may reach despite being private/internal.
+
+### Changed
+* Wings now requires Go 1.26 to build; release binaries are built with Go 1.27.2.
+* Lint CI (golangci-lint) runs on every push and pull request to `develop`.
+
 ## v1.13.3.1
 ### Changed
 * Fork-only re-release of v1.13.3 under a new version number — no code changes; binaries and image are rebuilt from the same sources. First release cut through the new `fork_revision` dispatch path.
