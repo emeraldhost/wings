@@ -16,6 +16,7 @@ import (
 
 	"emperror.dev/errors"
 	"github.com/apex/log"
+	cerrdefs "github.com/containerd/errdefs"
 
 	"github.com/Rene-Roscher/wings/environment"
 	"github.com/Rene-Roscher/wings/internal/progress"
@@ -53,23 +54,35 @@ func (s *Server) getServerwideIgnoredFiles() (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	if st.Mode()&os.ModeSymlink != 0 || st.Size() > 32*1024 {
-		// Don't read a symlinked ignore file, or a file larger than 32KiB in size.
+	if st.Mode()&os.ModeSymlink != 0 || st.Size() > filesystem.MaxIgnoreLength {
+		// Don't read a symlinked ignore file, or a file larger than the maximum list size.
 		return "", nil
 	}
 	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
 	}
+	if err := filesystem.ValidateIgnore(string(b)); err != nil {
+		return "", errors.WrapIf(err, "backup: invalid .pteroignore file")
+	}
 	return string(b), nil
 }
+
+// downloadSizeContextKey is the type of DownloadSizeContextKey; a dedicated type
+// avoids collisions with context values set by other packages.
+type downloadSizeContextKey struct{}
+
+// DownloadSizeContextKey is the context key under which the router passes the
+// size (int64) of a remote backup download to RestoreBackupWithContext so that
+// restore progress can be estimated.
+var DownloadSizeContextKey = downloadSizeContextKey{}
 
 // determineActualServerState checks the real container state and returns the appropriate Wings state
 // This function is thread-safe and handles errors gracefully during state cleanup
 func (s *Server) determineActualServerState() string {
 	// During cleanup, we should NOT preserve operational states
 	// This function is called to determine the FINAL state after operations complete
-	
+
 	// Check if the container is actually running right now
 	if running, err := s.Environment.IsRunning(s.Context()); err == nil {
 		if running {
@@ -127,7 +140,7 @@ func (s *Server) BackupWithContext(ctx context.Context, b backup.BackupInterface
 			EnvironmentState: actualState,
 			BackingUp:        &backingUp,
 		})
-		
+
 		if errors.Is(ctx.Err(), context.Canceled) {
 			s.Log().WithField("new_state", actualState).Info("reset server state after backup cancellation")
 		} else {
@@ -328,11 +341,11 @@ func (s *Server) BackupWithRetry(ctx context.Context, b backup.BackupInterface, 
 			// Exponential backoff: 30s, 60s, 120s...
 			backoffDuration := time.Duration(30*attempt*attempt) * time.Second
 			s.Log().WithFields(log.Fields{
-				"backup_id": b.Identifier(),
-				"attempt":   attempt + 1,
+				"backup_id":   b.Identifier(),
+				"attempt":     attempt + 1,
 				"max_retries": maxRetries + 1,
-				"backoff":   backoffDuration,
-				"last_error": lastErr,
+				"backoff":     backoffDuration,
+				"last_error":  lastErr,
 			}).Warn("retrying backup after failure")
 
 			// Wait for backoff period or context cancellation
@@ -352,8 +365,8 @@ func (s *Server) BackupWithRetry(ctx context.Context, b backup.BackupInterface, 
 		if err == nil {
 			if attempt > 0 {
 				s.Log().WithFields(log.Fields{
-					"backup_id": b.Identifier(),
-					"attempt":   attempt + 1,
+					"backup_id":      b.Identifier(),
+					"attempt":        attempt + 1,
 					"total_attempts": attempt + 1,
 				}).Info("backup succeeded after retry")
 			}
@@ -361,7 +374,7 @@ func (s *Server) BackupWithRetry(ctx context.Context, b backup.BackupInterface, 
 		}
 
 		lastErr = err
-		
+
 		// Don't retry on context cancellation or unrecoverable errors
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			s.Log().WithFields(log.Fields{
@@ -374,30 +387,30 @@ func (s *Server) BackupWithRetry(ctx context.Context, b backup.BackupInterface, 
 
 		// Log the failed attempt
 		s.Log().WithFields(log.Fields{
-			"backup_id": b.Identifier(),
-			"attempt":   attempt + 1,
+			"backup_id":   b.Identifier(),
+			"attempt":     attempt + 1,
 			"max_retries": maxRetries + 1,
-			"error":     err,
+			"error":       err,
 		}).Error("backup attempt failed")
 	}
 
 	// All attempts failed - emit failure events
 	s.Events().Publish(BackupCompletedEvent, map[string]any{
-		"uuid":          b.Identifier(),
-		"is_successful": false,
-		"error":         lastErr.Error(),
+		"uuid":           b.Identifier(),
+		"is_successful":  false,
+		"error":          lastErr.Error(),
 		"total_attempts": maxRetries + 1,
 	})
-	
+
 	// Also emit as ActivityEvent for persistent logging (WORK.md requirement)
 	s.Events().Publish(ActivityEvent, map[string]any{
-		"event":         "backup_failed",
-		"timestamp":     time.Now().Unix(),
-		"backup_id":     b.Identifier(),
-		"server_id":     s.ID(),
-		"error":         lastErr.Error(),
+		"event":          "backup_failed",
+		"timestamp":      time.Now().Unix(),
+		"backup_id":      b.Identifier(),
+		"server_id":      s.ID(),
+		"error":          lastErr.Error(),
 		"total_attempts": maxRetries + 1,
-		"message":       fmt.Sprintf("Backup failed after %d attempts: %v", maxRetries+1, lastErr),
+		"message":        fmt.Sprintf("Backup failed after %d attempts: %v", maxRetries+1, lastErr),
 	})
 
 	return errors.WithStackIf(lastErr)
@@ -413,41 +426,49 @@ func (s *Server) Backup(b backup.BackupInterface) error {
 	return s.BackupWithContext(ctx, b)
 }
 
-// RestoreBackup calls the Restore function on the provided backup. Once this
-// restoration is completed an event is emitted to the websocket to notify the
-// Panel that is has been completed.
+// RestoreBackupWithContext performs a server backup restore with context for cancellation support.
+// This is the primary restore function that should be used for all restore operations.
+//
+// It calls the Restore function on the provided backup. Once this restoration is
+// completed an event is emitted to the websocket to notify the Panel that is has
+// been completed. If truncate is set, all of the server's files are deleted once
+// it has stopped, before the backup is restored.
 //
 // In addition to the websocket event an API call is triggered to notify the
 // Panel of the new state.
-// RestoreBackupWithContext performs a server backup restore with context for cancellation support.
-// This is the primary restore function that should be used for all restore operations.
-func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupInterface, reader io.ReadCloser) (err error) {
-	s.Config().SetSuspended(true)
-	
+//
+// The server's suspension state is deliberately left untouched (upstream v1.13.4):
+// toggling it here would clobber a suspension applied by the Panel while the
+// restore is running. Instead the restoring flag is set before waiting for the
+// server to stop, which blocks power actions for the whole restore.
+func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupInterface, reader io.ReadCloser, truncate bool) (err error) {
 	// CRITICAL: DEFER ORDER (LIFO - Last In First Out)
 	// First defined = Last executed
 	// We want execution order: 1) Final progress, 2) State reset, 3) Panel notify, 4) Resource cleanup
 	// So we define in REVERSE: Resource cleanup, Panel notify, State reset, Final progress
-	
+
 	var progressTracker *SimpleProgressTracker
-	
+
 	// Define FIRST - executes LAST: Resource cleanup
 	defer func() {
-		s.Config().SetSuspended(false)
+		// Local backups will not pass a reader through to this function, so check
+		// first to make sure it is a valid reader before trying to close it.
 		if reader != nil {
 			_ = reader.Close()
 		}
 		s.Log().Debug("restore resource cleanup completed")
 	}()
-	
+
 	// Define SECOND - executes THIRD: Panel notification (needs err value)
+	// Send an API call to the Panel as soon as this function is done running so that
+	// the Panel is informed of the restoration status of this backup.
 	defer func() {
 		s.Log().WithField("success", err == nil).Debug("notifying panel of restore status")
 		if rerr := s.client.SendRestorationStatus(s.Context(), b.Identifier(), err == nil); rerr != nil {
 			s.Log().WithField("error", rerr).WithField("backup", b.Identifier()).Error("failed to notify Panel of backup restoration status")
 		}
 	}()
-	
+
 	// Define THIRD - executes SECOND: State reset (MUST happen before final progress)
 	defer func() {
 		// CRITICAL ERROR RECOVERY: Always reset state even if panic occurs
@@ -460,33 +481,33 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 				s.Environment.SetState(environment.ProcessOfflineState)
 			}
 		}()
-		
+
 		s.Log().WithFields(log.Fields{
-			"restoring_before": s.IsRestoring(),
+			"restoring_before":         s.IsRestoring(),
 			"environment_state_before": s.Environment.State(),
 		}).Debug("restore state cleanup starting")
-		
+
 		// Determine correct post-restore state
 		actualState := s.determineActualServerState()
 		restoring := false
-		
+
 		s.Log().WithFields(log.Fields{
-			"target_state": actualState,
+			"target_state":     actualState,
 			"target_restoring": restoring,
 		}).Debug("applying atomic state transition for restore cleanup")
-		
+
 		s.ApplyAtomicStateTransition(AtomicStateTransition{
 			EnvironmentState: actualState,
 			Restoring:        &restoring,
 		})
-		
+
 		s.Log().WithFields(log.Fields{
-			"new_state": actualState,
-			"restoring_after": s.IsRestoring(),
+			"new_state":               actualState,
+			"restoring_after":         s.IsRestoring(),
 			"environment_state_after": s.Environment.State(),
 		}).Info("reset server state after restore")
 	}()
-	
+
 	// Define LAST - executes FIRST: Send final progress (AFTER state is reset!)
 	defer func() {
 		// CRITICAL: Recover from any panic in progress tracking
@@ -495,36 +516,46 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 				s.Log().WithField("panic", r).Error("panic in final progress tracking - ignored")
 			}
 		}()
-		
+
 		// IMPORTANT: Use the actual error value at defer execution time, not capture time!
 		success := err == nil
-		
+
 		if progressTracker != nil {
 			s.Log().WithFields(log.Fields{
-				"success": success,
+				"success":      success,
 				"is_restoring": s.IsRestoring(),
-				"state": s.Environment.State(),
+				"state":        s.Environment.State(),
 			}).Info("sending final restore progress")
 			progressTracker.SendFinalProgress(success)
 			progressTracker.Close()
 		}
-		
+
 		// Send the restore completed event HERE, while we're still in restore state
 		// This ensures the event is sent before state reset
 		s.Events().Publish(BackupRestoreCompletedEvent, map[string]any{
 			"successful": success,
 		})
-		
+
 		// Log the event for debugging
 		s.Log().WithField("successful", success).Info("sent BackupRestoreCompletedEvent")
 	}()
 
 	// Don't try to restore the server until we have completely stopped the running
-	// instance, otherwise you'll likely hit all types of write errors due to the
-	// server being suspended.
-	if s.Environment.State() != environment.ProcessOfflineState {
+	// instance, otherwise you'll likely hit all types of write errors. The server
+	// cannot be started again while it is being restored: the restoring flag is
+	// set before waiting, so power actions are rejected from here on (this also
+	// cancels any open SFTP connections).
+	s.SetRestoring(true)
+	needsStop := s.Environment.State() != environment.ProcessOfflineState
+	if s.Environment.State() == environment.ProcessRestoreQueuedState {
+		// Fork: the queued state masks the real process state, so ask the
+		// environment directly instead of trying to stop an offline container.
+		running, rerr := s.Environment.IsRunning(ctx)
+		needsStop = rerr != nil || running
+	}
+	if needsStop {
 		if err = s.Environment.WaitForStop(ctx, 2*time.Minute, false); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
+			if !cerrdefs.IsNotFound(err) && !errors.Is(err, os.ErrNotExist) {
 				return errors.WrapIf(err, "server/backup: restore: failed to wait for container stop")
 			}
 		}
@@ -578,19 +609,19 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 
 	// Check if download size was passed through context (for S3 downloads)
 	var downloadSize int64
-	if ctxSize := ctx.Value("download_size"); ctxSize != nil {
+	if ctxSize := ctx.Value(DownloadSizeContextKey); ctxSize != nil {
 		if size, ok := ctxSize.(int64); ok && size > 0 {
 			downloadSize = size
 			s.Log().WithField("download_size", downloadSize).Debug("using download size from context for restore progress")
 		}
 	}
-	
+
 	// Try to get backup file size for percentage calculation
 	backupSize, err := b.Details(s.Context(), nil)
 	if err != nil {
 		s.Log().WithField("error", err).Debug("failed to get backup details for size")
 	}
-	
+
 	// Determine the best size to use for progress tracking
 	var estimatedTotal int64
 	if downloadSize > 0 {
@@ -608,7 +639,7 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 		estimatedTotal = int64(10 * 1024 * 1024 * 1024) // 10GB estimate
 		s.Log().WithField("estimated_restore_size", estimatedTotal).Info("using estimated size for restore progress (backup size unavailable)")
 	}
-	
+
 	restoreProgress.SetTotal(uint64(estimatedTotal))
 
 	progressTracker = NewSimpleProgressTracker(ctx, s, b.Identifier(), "restore", restoreProgress)
@@ -629,6 +660,16 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 		}
 	}
 
+	// Delete the server's files only now: the server has stopped, the backup has
+	// been located and (for remote restores) its format has been detected, so a
+	// restore that cannot happen leaves the files as they are (upstream v1.13.4).
+	if truncate {
+		s.Log().Info("deleting server files before restoring backup")
+		if err = s.Filesystem().TruncateRootDirectory(); err != nil {
+			return errors.WrapIf(err, "server/backup: restore: failed to delete server files")
+		}
+	}
+
 	// Attempt to restore the backup to the server by running through each entry
 	// in the file one at a time and writing them to the disk.
 	s.Log().Debug("starting file writing process for backup restoration")
@@ -640,9 +681,7 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 		// Local backup: let backup interface handle its own file reading
 		restoreReader = nil
 	}
-	
-	// MEMORY SAFETY: Set maximum buffer size for file operations (10MB)
-	const maxBufferSize = 10 * 1024 * 1024
+
 	buffer := make([]byte, 32*1024) // 32KB buffer for streaming
 
 	// Track restore statistics for validation
@@ -655,7 +694,7 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 	err = b.Restore(ctx, restoreReader, func(file string, info fs.FileInfo, r io.ReadCloser) error {
 		defer r.Close()
 		//s.Events().Publish(DaemonMessageEvent, "(restoring): "+file)
-		
+
 		// Use buffer to mark as used (for memory-safe streaming in future)
 		_ = buffer
 
@@ -672,38 +711,15 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 			restoreStats.totalSize += info.Size()
 		}
 
-		// Handle directories and files differently
-		if info.IsDir() {
-			// For directories, create the directory structure using the underlying UnixFS
-			created, err := s.Filesystem().UnixFS().MkdirAll(file, ufs.FileMode(info.Mode()))
-			if err != nil {
-				return err
-			}
-			// Chown every directory we just created so restored directories are
-			// owned by the server user instead of the user Wings runs as.
-			for _, dir := range created {
-				if err := s.Filesystem().Chown(dir); err != nil {
-					return err
-				}
-			}
-			// Set directory timestamps
-			atime := info.ModTime()
-			return s.Filesystem().Chtimes(file, atime, atime)
-		}
-
-		// For regular files, write the content
-		// TODO: since this will be called a lot, it may be worth adding an optimized
-		// Write with Chtimes method to the UnixFS that is able to re-use the
-		// same dirfd and file name.
-		if err := s.Filesystem().Write(file, r, info.Size(), info.Mode()); err != nil {
+		if err := s.restoreEntry(file, info, r); err != nil {
 			return err
 		}
-		atime := info.ModTime()
 
 		// Send ultra-live progress update AFTER successful write
-		updateProgress(info.Size())
-
-		return s.Filesystem().Chtimes(file, atime, atime)
+		if info.Mode().IsRegular() {
+			updateProgress(info.Size())
+		}
+		return nil
 	})
 
 	// Basic restore validation
@@ -727,8 +743,8 @@ func (s *Server) RestoreBackupWithContext(ctx context.Context, b backup.BackupIn
 
 // RestoreBackup performs a server backup restore with the server's context.
 // This method is kept for backward compatibility. New code should use RestoreBackupWithContext.
-func (s *Server) RestoreBackup(b backup.BackupInterface, reader io.ReadCloser) error {
-	return s.RestoreBackupWithContext(s.Context(), b, reader)
+func (s *Server) RestoreBackup(b backup.BackupInterface, reader io.ReadCloser, truncate bool) error {
+	return s.RestoreBackupWithContext(s.Context(), b, reader, truncate)
 }
 
 // generateBackupWithProgress creates a backup with progress tracking and context support
@@ -847,7 +863,7 @@ func (s *Server) validateBackupContent(backupPath, serverPath string) error {
 	serverChecksum := "unknown"
 
 	// Get backup file SHA1 (reuse existing checksum method)
-	if backupFile, err := os.Open(backupPath); err == nil {
+	if backupFile, err := os.Open(backupPath); err == nil { //nolint:gosec // backup archive path built by wings from the configured backup directory
 		hasher := sha256.New()
 		if _, err := io.Copy(hasher, backupFile); err == nil {
 			backupChecksum = hex.EncodeToString(hasher.Sum(nil))
@@ -865,9 +881,9 @@ func (s *Server) validateBackupContent(backupPath, serverPath string) error {
 			relPath, _ := filepath.Rel(serverPath, path)
 			serverHash.Write([]byte(relPath)) // Include path in hash
 
-			if file, err := os.Open(path); err == nil {
-				io.Copy(serverHash, file)
-				file.Close()
+			if file, err := os.Open(path); err == nil { //nolint:gosec // path comes from walking the server's own data directory (debug checksum only)
+				_, _ = io.Copy(serverHash, file)
+				_ = file.Close()
 			}
 			return nil
 		})
@@ -878,10 +894,10 @@ func (s *Server) validateBackupContent(backupPath, serverPath string) error {
 	}
 
 	s.Log().WithFields(log.Fields{
-		"original_files":      originalStats.FileCount,
-		"original_dirs":       originalStats.DirCount,
-		"backup_files":        backupStats.FileCount,
-		"backup_dirs":         backupStats.DirCount,
+		"original_files":        originalStats.FileCount,
+		"original_dirs":         originalStats.DirCount,
+		"backup_files":          backupStats.FileCount,
+		"backup_dirs":           backupStats.DirCount,
 		"backup_sha256":         backupChecksum,
 		"server_content_sha256": serverChecksum,
 	}).Debug("backup content validation stats")
@@ -938,7 +954,7 @@ func (s *Server) countServerFilesAndDirs(serverPath string) (*fileStats, error) 
 func (s *Server) countBackupEntries(backupPath string) (*fileStats, error) {
 	stats := &fileStats{}
 
-	f, err := os.Open(backupPath)
+	f, err := os.Open(backupPath) //nolint:gosec // backup archive path built by wings from the configured backup directory
 	if err != nil {
 		return nil, err
 	}
@@ -1021,7 +1037,7 @@ func (s *Server) generateLocalBackupWithProgress(ctx context.Context, b *backup.
 func (s *Server) generateS3BackupWithProgress(ctx context.Context, b *backup.S3Backup, ignored string, progressInstance *progress.Progress, progressTracker *SimpleProgressTracker) (*backup.ArchiveDetails, error) {
 	// S3 PROGRESS: 80/20 split pattern for S3 backups
 	// Archive creation = 80%, Upload = 20%
-	
+
 	// Configure tracker for S3 80/20 mode from the start
 	if progressTracker != nil {
 		// Mark as S3 immediately, archive size will be set later
@@ -1054,7 +1070,7 @@ func (s *Server) generateS3BackupWithProgress(ctx context.Context, b *backup.S3B
 
 	// Phase 2: S3 upload with REAL progress tracking (remaining 20%)
 	s.Log().Debug("S3 upload phase starting with real progress tracking")
-	
+
 	// Set up real progress tracking for S3 upload with WebSocket callback
 	if progressInstance != nil && progressTracker != nil {
 		b.WithUploadProgress(progressInstance)
@@ -1072,4 +1088,56 @@ func (s *Server) generateS3BackupWithProgress(ctx context.Context, b *backup.S3B
 
 	s.Log().WithField("backup", b.Identifier()).Info("S3 backup upload completed")
 	return ad, nil
+}
+
+// restoreEntry restores a single entry of a backup archive. Entries are restored
+// as the type they have in the archive (upstream v1.13.4): directories, symlinks
+// and regular files; hard links, devices and other special files are skipped.
+//
+// Fork divergence: directories keep their archived mode and modification time,
+// and every directory created along the way is chowned to the server user.
+func (s *Server) restoreEntry(file string, info fs.FileInfo, r io.Reader) error {
+	switch {
+	case info.IsDir():
+		// For directories, create the directory structure using the underlying UnixFS
+		created, err := s.Filesystem().UnixFS().MkdirAll(file, ufs.FileMode(info.Mode()))
+		if err != nil {
+			return err
+		}
+		// Chown every directory we just created so restored directories are
+		// owned by the server user instead of the user Wings runs as.
+		for _, dir := range created {
+			if err := s.Filesystem().Chown(dir); err != nil {
+				return err
+			}
+		}
+		// Set directory timestamps
+		atime := info.ModTime()
+		return s.Filesystem().Chtimes(file, atime, atime)
+	case info.Mode()&fs.ModeSymlink != 0:
+		h, ok := info.Sys().(*tar.Header)
+		if !ok || h.Linkname == "" {
+			return nil
+		}
+		if err := s.Filesystem().CreateDirectory(filepath.Dir(file), "/"); err != nil {
+			return err
+		}
+		if err := s.Filesystem().Symlink(h.Linkname, file); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		return nil
+	case !info.Mode().IsRegular():
+		// Hard links, devices and other special files are not restored.
+		return nil
+	}
+
+	// For regular files, write the content
+	// TODO: since this will be called a lot, it may be worth adding an optimized
+	// Write with Chtimes method to the UnixFS that is able to re-use the
+	// same dirfd and file name.
+	if err := s.Filesystem().Write(file, r, info.Size(), info.Mode()); err != nil {
+		return err
+	}
+	atime := info.ModTime()
+	return s.Filesystem().Chtimes(file, atime, atime)
 }

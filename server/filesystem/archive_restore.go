@@ -23,14 +23,14 @@ func DetectCompressionFormat(reader io.ReadCloser) (CompressionFormat, io.ReadCl
 	if reader == nil {
 		return CompressionGzip, nil, errors.New("backup: nil reader provided to format detection")
 	}
-	
+
 	// Peek first 4 bytes without consuming the stream
 	peekReader := bufio.NewReader(reader)
 	header, err := peekReader.Peek(4)
 	if err != nil && err != io.EOF {
 		return CompressionGzip, io.NopCloser(peekReader), errors.Wrap(err, "backup: failed to read format detection header")
 	}
-	
+
 	// Validate we have enough data for detection
 	if len(header) < 2 {
 		return CompressionGzip, io.NopCloser(peekReader), errors.New("backup: insufficient data for format detection")
@@ -51,7 +51,7 @@ func CreateDecompressor(reader io.ReadCloser, format CompressionFormat) (io.Read
 	if reader == nil {
 		return nil, errors.New("backup: nil reader provided to decompressor")
 	}
-	
+
 	switch format {
 	case CompressionGzip:
 		gzReader, err := gzip.NewReader(reader)
@@ -74,5 +74,3 @@ func CreateDecompressor(reader io.ReadCloser, format CompressionFormat) (io.Read
 		return gzReader, nil
 	}
 }
-
-

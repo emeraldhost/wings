@@ -41,17 +41,15 @@ func TestBackupQueueConcurrencyLimits(t *testing.T) {
 	registry := NewBackupOperationRegistry()
 	ctx := context.Background()
 
-	var operations []*BackupOperation
 	var cancels []context.CancelFunc
 
 	// Fill up all 8 backup slots
 	for i := 0; i < 8; i++ {
-		op, _, cancel, err, wasQueued := registry.Register(ctx, 
+		_, _, cancel, err, wasQueued := registry.Register(ctx,
 			"backup"+string(rune(i+'0')), "server1", OperationTypeBackup)
 		require.NoError(t, err)
 		assert.False(t, wasQueued, "First 8 operations should not be queued")
-		
-		operations = append(operations, op)
+
 		cancels = append(cancels, cancel)
 	}
 
@@ -71,7 +69,7 @@ func TestBackupQueueConcurrencyLimits(t *testing.T) {
 
 	// Cleanup: Complete one operation and verify slot becomes available
 	registry.Complete("backup0")
-	
+
 	// Now 9th operation should succeed (it won't queue since slot is available)
 	_, _, cancel9, err, wasQueued := registry.Register(ctx, "backup9", "server1", OperationTypeBackup)
 	require.NoError(t, err)
@@ -95,7 +93,7 @@ func TestBackupRestoreSeparateLimits(t *testing.T) {
 
 	// Fill up all 8 backup slots
 	for i := 0; i < 8; i++ {
-		_, _, cancel, err, wasQueued := registry.Register(ctx, 
+		_, _, cancel, err, wasQueued := registry.Register(ctx,
 			"backup"+string(rune(i+'0')), "server1", OperationTypeBackup)
 		require.NoError(t, err)
 		assert.False(t, wasQueued)
@@ -104,7 +102,7 @@ func TestBackupRestoreSeparateLimits(t *testing.T) {
 
 	// Fill up all 8 restore slots (should not be affected by backup slots)
 	for i := 0; i < 8; i++ {
-		_, _, cancel, err, wasQueued := registry.Register(ctx, 
+		_, _, cancel, err, wasQueued := registry.Register(ctx,
 			"restore"+string(rune(i+'0')), "server1", OperationTypeRestore)
 		require.NoError(t, err)
 		assert.False(t, wasQueued, "Restore slots should be independent of backup slots")
@@ -115,7 +113,7 @@ func TestBackupRestoreSeparateLimits(t *testing.T) {
 	status := registry.GetQueueStatus()
 	backupStatus := status["backups"].(map[string]any)
 	restoreStatus := status["restores"].(map[string]any)
-	
+
 	assert.Equal(t, 8, backupStatus["active"])
 	assert.Equal(t, 0, backupStatus["available"])
 	assert.Equal(t, 8, restoreStatus["active"])
@@ -182,6 +180,11 @@ func TestServerDeletionCleanup(t *testing.T) {
 	_, _, cancel3, err, _ := registry.Register(ctx, "backup3", "server2", OperationTypeBackup)
 	require.NoError(t, err)
 	cancels = append(cancels, cancel3)
+	defer func() {
+		for _, c := range cancels {
+			c()
+		}
+	}()
 
 	// Verify all operations exist
 	assert.Equal(t, 3, registry.Count())
@@ -217,17 +220,17 @@ func TestConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			
+
 			for j := 0; j < operationsPerGoroutine; j++ {
 				backupID := "backup_" + string(rune(goroutineID+'0')) + "_" + string(rune(j+'0'))
 				serverID := "server" + string(rune(goroutineID+'0'))
-				
+
 				_, _, cancel, err, _ := registry.Register(ctx, backupID, serverID, OperationTypeBackup)
 				if err != nil {
 					errors <- err
 					return
 				}
-				
+
 				// Immediately complete to free up slots
 				registry.Complete(backupID)
 				if cancel != nil {

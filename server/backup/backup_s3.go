@@ -89,7 +89,10 @@ func (s *S3Backup) Generate(ctx context.Context, fsys *filesystem.Filesystem, ig
 
 	defer func() {
 		if success {
-			s.Remove() // Only remove on successful upload
+			// Only remove on successful upload
+			if err := s.Remove(); err != nil && !errors.Is(err, os.ErrNotExist) {
+				s.log().WithField("error", err).Warn("failed to remove local copy of backup")
+			}
 		} else {
 			// Clean up orphaned S3 parts on failure
 			if len(uploadedParts) > 0 {
@@ -161,7 +164,7 @@ func (s *S3Backup) Generate(ctx context.Context, fsys *filesystem.Filesystem, ig
 // If the callback returns an error the entire process is stopped.
 func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCallback) error {
 	s.log().Debug("S3 restore: starting restore process")
-	
+
 	// CRITICAL: The reader provided here is ALREADY DECOMPRESSED by the server layer!
 	// The server's RestoreBackupWithContext method handles:
 	// 1. Format detection (gzip, etc.)
@@ -169,33 +172,33 @@ func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCal
 	// 3. Passing us the clean TAR stream
 	//
 	// We should NOT attempt format detection or decompression here!
-	
+
 	// Start with the provided reader (already decompressed TAR stream)
 	finalReader := r
-	
+
 	// Apply write rate limiting to prevent disk overload
 	if writeLimit := int64(config.Get().System.Backups.WriteLimit * 1024 * 1024); writeLimit > 0 {
 		s.log().WithField("write_limit_mb", writeLimit/1024/1024).Debug("S3 restore: applying write rate limit")
 		finalReader = ratelimit.Reader(r, ratelimit.NewBucketWithRate(float64(writeLimit), writeLimit))
 	}
-	
+
 	// Note: Download progress tracking doesn't make sense here because:
 	// 1. We're receiving an already-decompressed stream
 	// 2. The actual download happens in the router layer
 	// 3. The size would be the decompressed size, not download size
 	// Progress tracking for restore happens at the file extraction level in the server layer
-	
+
 	s.log().Debug("S3 restore: starting TAR archive extraction")
 	// Use the mholt/archives package to extract TAR archive
 	// The reader is already decompressed, just extract the TAR
 	tarFormat := archives.Tar{}
 	fileCount := 0
 	totalBytes := uint64(0)
-	
+
 	if err := tarFormat.Extract(ctx, finalReader, func(ctx context.Context, f archives.FileInfo) error {
 		fileCount++
 		totalBytes += uint64(f.Size())
-		
+
 		// Log every 100 files or every 100MB to track progress
 		if fileCount%100 == 0 || totalBytes%(100*1024*1024) < uint64(f.Size()) {
 			s.log().WithFields(log.Fields{
@@ -204,11 +207,11 @@ func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCal
 				"current_file":    f.NameInArchive,
 			}).Debug("S3 restore: extraction progress")
 		}
-		
+
 		r, err := f.Open()
 		if err != nil {
 			s.log().WithFields(log.Fields{
-				"file": f.NameInArchive,
+				"file":  f.NameInArchive,
 				"error": err,
 			}).Error("S3 restore: failed to open file from archive")
 			return err
@@ -219,12 +222,12 @@ func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCal
 		// The callback should be fast and context-aware itself
 		if err := callback(f.NameInArchive, f.FileInfo, r); err != nil {
 			s.log().WithFields(log.Fields{
-				"file": f.NameInArchive,
+				"file":  f.NameInArchive,
 				"error": err,
 			}).Error("S3 restore: callback failed for file")
 			return err
 		}
-		
+
 		// Check context after each file
 		select {
 		case <-ctx.Done():
@@ -233,17 +236,17 @@ func (s *S3Backup) Restore(ctx context.Context, r io.Reader, callback RestoreCal
 		default:
 			// Continue processing
 		}
-		
+
 		return nil
 	}); err != nil {
 		s.log().WithFields(log.Fields{
 			"files_processed": fileCount,
 			"total_bytes_mb":  totalBytes / (1024 * 1024),
-			"error": err,
+			"error":           err,
 		}).Error("S3 restore: TAR extraction failed")
 		return err
 	}
-	
+
 	s.log().WithFields(log.Fields{
 		"files_processed": fileCount,
 		"total_bytes_mb":  totalBytes / (1024 * 1024),
@@ -286,7 +289,7 @@ func (s *S3Backup) generateRemoteRequest(ctx context.Context, rc io.ReadCloser) 
 			return uploader.uploadedParts, ctx.Err()
 		default:
 		}
-		
+
 		// Get the size for the current part.
 		var partSize int64
 		if i+1 < len(urls.Parts) {
@@ -316,9 +319,9 @@ func (s *S3Backup) generateRemoteRequest(ctx context.Context, rc io.ReadCloser) 
 
 type s3FileUploader struct {
 	io.ReadCloser
-	client          *http.Client
-	uploadedParts   []remote.BackupPart
-	progressTracker ProgressTracker
+	client           *http.Client
+	uploadedParts    []remote.BackupPart
+	progressTracker  ProgressTracker
 	progressCallback func()
 }
 
@@ -381,12 +384,12 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 	if size <= 0 || size > (5*1024*1024*1024) { // Max 5GB per part (S3 limit)
 		return "", errors.New("backup: invalid part size for S3 upload")
 	}
-	
+
 	// For parts <=100MB, buffer for retry support. For larger parts, accept retry failure.
 	const maxBufferSize = 100 * 1024 * 1024 // 100MB threshold
 	var partReader io.Reader
 	var canRetry bool
-	
+
 	if size <= maxBufferSize {
 		// Small part - buffer it for retry support
 		partData := make([]byte, size)
@@ -399,7 +402,7 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 		}
 		partReader = bytes.NewReader(partData)
 		canRetry = true
-		
+
 		// Don't update progress here for buffered parts!
 		// Progress will be simulated during actual upload to show network transfer
 		// This prevents the progress bar from jumping to completion before upload starts
@@ -408,17 +411,17 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 		partReader = io.LimitReader(fu.ReadCloser, size)
 		canRetry = false
 	}
-	
+
 	var etag string
 	attempt := 0
 	err := backoff.Retry(func() error {
 		attempt++
-		
+
 		// For large parts, only allow one attempt
 		if !canRetry && attempt > 1 {
 			return backoff.Permanent(errors.New("backup: cannot retry large part upload"))
 		}
-		
+
 		// Create new request for each attempt
 		r, err := http.NewRequestWithContext(ctx, http.MethodPut, part, nil)
 		if err != nil {
@@ -436,7 +439,9 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 		if canRetry {
 			// Reset reader for retry
 			if br, ok := partReader.(*bytes.Reader); ok {
-				br.Seek(0, 0)
+				if _, err := br.Seek(0, io.SeekStart); err != nil {
+					return errors.Wrap(err, "backup: could not rewind part for retry")
+				}
 			}
 			// IMPORTANT: Add progress tracking for buffered uploads too!
 			// This simulates progress during network transfer
@@ -458,7 +463,7 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 					"part_size_mb": size / (1024 * 1024),
 					"has_callback": fu.progressCallback != nil,
 				}).Debug("S3: Setting up progress tracking for large part upload")
-				
+
 				progressReader := NewProgressReader(partReader, fu.progressTracker)
 				if fu.progressCallback != nil {
 					progressReader.WithCallback(fu.progressCallback)
@@ -468,7 +473,7 @@ func (fu *s3FileUploader) uploadPart(ctx context.Context, part string, size int6
 				r.Body = Reader{Reader: partReader}
 			}
 		}
-		
+
 		res, err := fu.client.Do(r)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -555,46 +560,46 @@ func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 	if len(p) > maxChunk {
 		p = p[:maxChunk]
 	}
-	
+
 	n, err = pr.reader.Read(p)
-	
+
 	// Debug: Log every read call
 	if n > 0 && pr.progress != nil {
 		totalRead := pr.progress.Written()
 		log.WithFields(log.Fields{
-			"bytes_read": n,
-			"total_read": totalRead,
+			"bytes_read":  n,
+			"total_read":  totalRead,
 			"buffer_size": len(p),
-			"is_eof": err == io.EOF,
+			"is_eof":      err == io.EOF,
 		}).Debug("S3 ProgressReader: Read called")
 	}
-	
+
 	if n > 0 && pr.progress != nil {
 		pr.mutex.Lock()
 		defer pr.mutex.Unlock() // CRITICAL: Always unlock, even on panic
-		
+
 		pr.progress.AddWritten(uint64(n))
-		
+
 		// Trigger callback if set, with intelligent throttling
 		if pr.callback != nil {
 			now := time.Now().UnixNano()
-			
+
 			// Dynamic throttling based on data rate:
 			// - For fast uploads (>10MB/s): throttle to 100ms
-			// - For normal uploads: throttle to 250ms  
+			// - For normal uploads: throttle to 250ms
 			// - Always send first and last update
 			bytesWritten := pr.progress.Written()
 			isFirst := pr.lastCallback == 0
 			isLast := err == io.EOF
-			
+
 			// Debug log first read
 			if isFirst {
 				log.WithFields(log.Fields{
-					"bytes_read": n,
+					"bytes_read":    n,
 					"total_written": bytesWritten,
 				}).Debug("S3 ProgressReader: First read from upload stream")
 			}
-			
+
 			var throttleInterval int64 = 250_000_000 // Default 250ms
 			if !isFirst && pr.lastCallback > 0 {
 				// Calculate upload speed based on bytes since last callback
@@ -608,27 +613,28 @@ func (pr *ProgressReader) Read(p []byte) (n int, err error) {
 					}
 				}
 			}
-			
+
 			shouldSend := isFirst || isLast || (now-pr.lastCallback >= throttleInterval)
-			
+
 			if shouldSend {
 				pr.lastCallback = now
 				pr.lastBytesWritten = bytesWritten
-				
+
 				// Debug log callback trigger
 				log.WithFields(log.Fields{
-					"is_first": isFirst,
-					"is_last": isLast,
+					"is_first":      isFirst,
+					"is_last":       isLast,
 					"bytes_written": bytesWritten,
-					"should_send": shouldSend,
-					"throttle_ms": throttleInterval / 1_000_000,
+					"should_send":   shouldSend,
+					"throttle_ms":   throttleInterval / 1_000_000,
 				}).Debug("S3 ProgressReader: Callback check")
-				
+
 				// Recover from panic in callback - progress events must never break uploads
 				func() {
 					defer func() {
+						// Ignore panics - progress is not critical.
 						if r := recover(); r != nil {
-							// Silently ignore panics - progress is not critical
+							log.WithField("panic", r).Debug("S3 ProgressReader: progress callback panicked")
 						}
 					}()
 					pr.callback()

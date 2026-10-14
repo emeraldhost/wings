@@ -24,7 +24,7 @@ func TestBackupRetryLogicBasics(t *testing.T) {
 
 	for _, tc := range testCases {
 		backoff := time.Duration(1<<tc.attempt) * time.Second
-		assert.Equal(t, tc.expected, backoff, 
+		assert.Equal(t, tc.expected, backoff,
 			"Exponential backoff calculation incorrect for attempt %d", tc.attempt)
 	}
 }
@@ -36,7 +36,7 @@ func TestRetryDefaultBehavior(t *testing.T) {
 	if maxRetries <= 0 {
 		maxRetries = 2 // Default as per WORK.md requirements
 	}
-	
+
 	assert.Equal(t, 2, maxRetries, "Default retry count should be 2 per WORK.md")
 }
 
@@ -68,21 +68,21 @@ func TestRetryContextBehavior(t *testing.T) {
 // TestRetryBackoffTiming tests exponential backoff timing is reasonable
 func TestRetryBackoffTiming(t *testing.T) {
 	start := time.Now()
-	
+
 	// Simulate 3 retries with exponential backoff
 	for attempt := 1; attempt <= 3; attempt++ {
 		backoff := time.Duration(1<<(attempt-1)) * time.Second
-		
+
 		// Use a much shorter backoff for testing
 		testBackoff := backoff / 1000 // Convert seconds to milliseconds for fast test
 		time.Sleep(testBackoff)
 	}
-	
+
 	elapsed := time.Since(start)
-	
+
 	// Should have delays: 1ms + 2ms + 4ms = 7ms minimum
 	minExpected := 7 * time.Millisecond
-	assert.True(t, elapsed >= minExpected, 
+	assert.True(t, elapsed >= minExpected,
 		"Backoff timing should be cumulative, elapsed: %v, expected >= %v", elapsed, minExpected)
 }
 
@@ -95,7 +95,7 @@ func TestBackupOperationRegistryIntegrationWithRetries(t *testing.T) {
 	_, opCtx, cancel, err, wasQueued := registry.Register(ctx, "retry-test-backup", "server1", OperationTypeBackup)
 	require.NoError(t, err)
 	assert.False(t, wasQueued)
-	
+
 	defer func() {
 		cancel()
 		registry.Complete("retry-test-backup")
@@ -154,18 +154,18 @@ func TestFailureEventSimulation(t *testing.T) {
 // TestBackupRetryStateManagement tests that server states are properly managed during retries
 func TestBackupRetryStateManagement(t *testing.T) {
 	// Test that atomic state transitions work correctly
-	
+
 	// Simulate initial state
 	isBackingUp := false
-	
+
 	// Start backup (should set backing up)
 	isBackingUp = true
 	assert.True(t, isBackingUp, "Server should be in backing up state")
-	
+
 	// Simulate retry (state should remain backing up)
 	// No state change during retry
 	assert.True(t, isBackingUp, "Server should remain in backing up state during retry")
-	
+
 	// Simulate completion or failure (should clear state)
 	isBackingUp = false
 	assert.False(t, isBackingUp, "Server should clear backing up state after completion/failure")
@@ -174,22 +174,22 @@ func TestBackupRetryStateManagement(t *testing.T) {
 // TestProgressTrackingDuringRetries tests progress is handled correctly during retries
 func TestProgressTrackingDuringRetries(t *testing.T) {
 	// Test progress reset between retry attempts
-	
+
 	type MockProgress struct {
 		current int64
 		total   int64
 	}
-	
+
 	progress := &MockProgress{current: 0, total: 100}
-	
+
 	// First attempt - progress to 50%
 	progress.current = 50
 	assert.Equal(t, int64(50), progress.current)
-	
+
 	// Retry - progress should reset
 	progress.current = 0
 	assert.Equal(t, int64(0), progress.current, "Progress should reset between retry attempts")
-	
+
 	// Second attempt - progress to completion
 	progress.current = 100
 	assert.Equal(t, int64(100), progress.current)
