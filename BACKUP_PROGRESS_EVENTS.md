@@ -7,13 +7,14 @@ This document describes the new real-time backup progress events available via W
 ### Event Name
 - **Event**: `backup progress`
 - **Type**: Real-time progress updates
-- **Frequency**: ~2 updates per second maximum (intelligent throttling)
+- **Frequency**: up to 4 updates per second (250 ms throttle)
 
 ## Event Structure
 
 ```json
 {
-  "type": "create|restore",
+  "backup_id": "47363ce7-d70a-430e-8e75-6dc87c8d016d",
+  "type": "create|restore|download",
   "percentage": 0-100,
   "bytes_written": 1234567,
   "bytes_total": 10000000
@@ -24,10 +25,11 @@ This document describes the new real-time backup progress events available via W
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Type of operation: `"create"` for backup creation, `"restore"` for backup restoration |
+| `backup_id` | string | UUID of the backup the update belongs to |
+| `type` | string | Type of operation: `"create"` for backup creation, `"restore"` for backup restoration, `"download"` while an S3 backup is downloaded for a restore (sent unthrottled from the download reader) |
 | `percentage` | int | Progress percentage (0-100). For restore operations, this is typically `0` |
-| `bytes_written` | int64 | Number of bytes processed so far |
-| `bytes_total` | int64 | Total bytes to process (for create operations) |
+| `bytes_written` | int64 | Number of bytes processed so far (omitted when 0) |
+| `bytes_total` | int64 | Total bytes to process (omitted when unknown or 0) |
 
 **Special Values:**
 - `percentage: 100` = Operation completed successfully
@@ -200,7 +202,7 @@ function BackupProgressComponent({ websocket }) {
 
 ## Performance Characteristics
 
-- **Update Frequency**: Maximum ~2 updates per second per operation
+- **Update Frequency**: Maximum 4 updates per second per operation (250 ms throttle)
 - **Bandwidth Usage**: ~100 bytes per update
 - **CPU Overhead**: <0.00001% of backup operation time
 - **Memory Usage**: ~80 bytes per active backup operation
@@ -210,7 +212,7 @@ function BackupProgressComponent({ websocket }) {
 ### Throttling Behavior
 - Progress updates are throttled to prevent WebSocket spam
 - Updates only sent when percentage increases by ≥1%
-- Minimum 500ms interval between updates
+- Minimum 250 ms interval between updates
 - No throttling for initial (0%) and final (100%/-1%) updates
 
 ### Reliability

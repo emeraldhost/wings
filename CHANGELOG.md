@@ -8,7 +8,14 @@
 * WebSocket and HTTP API: serialized writes with deadlines, throttled sends, and stricter request/upload handling.
 * Configuration updates sent by the Panel can now only change the Panel-owned values (uuid, token, API host/port/SSL, upload limit, SFTP port, debug); everything else in `config.yml` stays under the node operator's control.
 
+* WebSocket `activity` events now require the `activity.read` permission and `download progress` events require `file.read`; previously every websocket subscriber received them, including file paths and download URLs.
+* Remote file downloads without a `Content-Length` (chunked) are now capped at 15 GB like downloads of known size.
+* Backup restores from a remote location no longer log the presigned download URL (including its signature); only the host is logged.
+
 ### Fixed
+* **Deleting a server no longer deletes the local backups of every server on the node.** The server cleanup removed every file in the backup directory that looked like a backup, regardless of which server it belonged to; it also ran when the Panel sent a duplicate create request and on transfer cleanup. Local backups are now only removed when the Panel deletes a specific backup.
+* A duplicate server-create request or a failed transfer no longer cancels the running backups and restores of the live server with the same UUID.
+* Remote file downloads without a `Content-Length` were saved as an empty file; they are now written in full (counted against the disk limit as they stream), and a failed write is reported as failed instead of completed.
 * Backup restores no longer suspend/unsuspend the server, so a Panel-side suspension is no longer cleared by a restore. The server is protected from starting via the restoring flag instead.
 * "Truncate directory" on restore now happens inside the restore after the server has stopped, rather than before the backup was even located — a missing backup or an unreadable S3 stream no longer leaves the server with deleted files.
 * Restores recreate symlinks as symlinks and skip hard links, devices and other special files instead of writing them as regular files.
