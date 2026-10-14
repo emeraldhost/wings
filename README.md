@@ -128,12 +128,12 @@ All progress events include comprehensive information:
 This fork is a drop-in replacement for the original Wings. Simply replace your Wings binary with this version:
 
 ```bash
-# Build from source
-go build -o wings cmd/root.go
+# Download the pre-built binary (linux amd64 / arm64)
+curl -L -o /usr/local/bin/wings "https://github.com/emeraldhost/wings/releases/latest/download/wings_linux_$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")"
+chmod u+x /usr/local/bin/wings
 
-# Or download pre-built binary (if available)
-wget https://github.com/Rene-Roscher/wings/releases/latest/download/wings
-chmod +x wings
+# Or build from source
+go build -o wings .
 ```
 
 ## Pterodactyl v2 is coming soon

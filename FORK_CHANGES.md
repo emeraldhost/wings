@@ -43,6 +43,7 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 |------|------|------|
 | `go.mod` | `module github.com/pterodactyl/wings` → `github.com/Rene-Roscher/wings` | Root of the rename; every Go import of the module changes accordingly. |
 | `Dockerfile`, `Makefile`, `.github/workflows/{push,release}.yaml`, `wings.go` | ldflags / `SRC_PATH` / import path use the `Rene-Roscher` module | Required so `system.Version` is injected and builds resolve. |
+| `README.md` (install section), `cmd/root.go` (startup banner Source/License) | Point at the **repo** `github.com/emeraldhost/wings`, not the module path. Release assets are `wings_linux_{amd64,arm64}` + `SHA256SUMS` (no plain `wings` asset). | Repo URL ≠ module path: only `go.mod`/imports/ldflags use `Rene-Roscher`. |
 | ~every `*.go` file | `github.com/pterodactyl/wings/...` → `github.com/Rene-Roscher/wings/...` | **Incidental noise** — appears as conflicts on most merges but carries no behavior. Always "keep ours (Rene-Roscher)". |
 
 ### 1.2 Backup subsystem — the largest divergence
