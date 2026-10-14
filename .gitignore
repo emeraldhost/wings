@@ -56,3 +56,7 @@ pprof.*
 .claude-flow/
 .hive-mind/
 CLAUDE.md
+
+# Local build artifacts (fork): never commit binaries
+/wings-*
+/dist/

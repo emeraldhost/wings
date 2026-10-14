@@ -76,6 +76,11 @@ type Backup struct {
 	client     remote.Client
 	adapter    AdapterType
 	logContext map[string]interface{}
+
+	// foundPath is set by LocateLocal when an existing local backup was found
+	// under a legacy extension (.tar). Path() returns it, so Size, Checksum and
+	// Details read the same file that Restore and Remove use.
+	foundPath string
 }
 
 func (b *Backup) SetClient(c remote.Client) {
@@ -109,19 +114,14 @@ func (b *Backup) validateIdentifier() error {
 
 // Path returns the path for this specific backup.
 func (b *Backup) Path() string {
+	if b.foundPath != "" {
+		return b.foundPath
+	}
 	identifier, err := b.normalizedIdentifier()
 	if err != nil {
 		identifier = path.Base(b.Identifier())
 	}
 	return path.Join(config.Get().System.BackupDirectory, identifier+".tar.gz")
-}
-
-// PathForLocalBackup returns the path for a LocalBackup, checking for foundPath override
-func (b *Backup) PathForLocalBackup(foundPath string) string {
-	if foundPath != "" {
-		return foundPath // Use discovered path for backward compatibility
-	}
-	return b.Path() // Use standard path generation
 }
 
 // Size returns the size of the generated backup.

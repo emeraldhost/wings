@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -336,8 +337,12 @@ func newS3FileUploader(file io.ReadCloser) *s3FileUploader {
 		client: &http.Client{
 			Timeout: time.Hour * 2,
 			Transport: &http.Transport{
-				// Force HTTP/1.1 to ensure streaming uploads work properly
+				Proxy: http.ProxyFromEnvironment,
+				// Force HTTP/1.1 to ensure streaming uploads work properly. A non-nil,
+				// empty TLSNextProto is what actually disables HTTP/2; ForceAttemptHTTP2
+				// alone does not.
 				ForceAttemptHTTP2: false,
+				TLSNextProto:      map[string]func(string, *tls.Conn) http.RoundTripper{},
 				// Disable buffering for request bodies
 				DisableCompression: true,
 				// Increase idle connections for better performance

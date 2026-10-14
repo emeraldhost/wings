@@ -16,6 +16,10 @@
 * **Deleting a server no longer deletes the local backups of every server on the node.** The server cleanup removed every file in the backup directory that looked like a backup, regardless of which server it belonged to; it also ran when the Panel sent a duplicate create request and on transfer cleanup. Local backups are now only removed when the Panel deletes a specific backup.
 * A duplicate server-create request or a failed transfer no longer cancels the running backups and restores of the live server with the same UUID.
 * Remote file downloads without a `Content-Length` were saved as an empty file; they are now written in full (counted against the disk limit as they stream), and a failed write is reported as failed instead of completed.
+* A server transfer can no longer start while a backup of that server is running.
+* Local backups stored as uncompressed `.tar` could be restored but their size/checksum lookup failed, so restore progress fell back to an estimate; both now read the actual file.
+* The backup event sent when the Panel could not be notified of a successful backup now reports `checksum_type: sha256` like all other backup events.
+* S3 backup uploads now really use HTTP/1.1 as intended and respect the `HTTP(S)_PROXY` environment variables.
 * Backup restores no longer suspend/unsuspend the server, so a Panel-side suspension is no longer cleared by a restore. The server is protected from starting via the restoring flag instead.
 * "Truncate directory" on restore now happens inside the restore after the server has stopped, rather than before the backup was even located — a missing backup or an unreadable S3 stream no longer leaves the server with deleted files.
 * Restores recreate symlinks as symlinks and skip hard links, devices and other special files instead of writing them as regular files.

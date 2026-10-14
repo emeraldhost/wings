@@ -164,9 +164,9 @@ func (s *Server) SetTransferring(state bool) {
 }
 
 // StartTransferring marks the server as being transferred, returning false if
-// it already is, or if it is being installed or restored.
+// it already is, or if it is being installed, restored or backed up.
 func (s *Server) StartTransferring() bool {
-	if s.IsInstalling() || s.IsRestoring() || !s.transferring.SwapIf(true) {
+	if s.IsInstalling() || s.IsRestoring() || s.IsBackingUp() || !s.transferring.SwapIf(true) {
 		return false
 	}
 	s.Sftp().CancelAll()

@@ -76,6 +76,8 @@ jobs:
           VERSION: ${{ steps.resolve.outputs.version }}
         run: |
           set -euo pipefail
+          # dist/ is gitignored, so it does not exist in a fresh checkout.
+          mkdir -p dist
           for arch in amd64 arm64; do
             GOARCH="$arch" go build \
               -o "dist/wings_linux_${arch}" \

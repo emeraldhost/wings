@@ -299,7 +299,7 @@ func (s *Server) BackupWithContext(ctx context.Context, b backup.BackupInterface
 			"uuid":           b.Identifier(),
 			"is_successful":  true,
 			"checksum":       ad.Checksum,
-			"checksum_type":  "sha1",
+			"checksum_type":  "sha256",
 			"file_size":      ad.Size,
 			"panel_notified": false,
 			"notify_error":   notifyError.Error(),

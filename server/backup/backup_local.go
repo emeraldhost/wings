@@ -17,8 +17,6 @@ import (
 
 type LocalBackup struct {
 	Backup
-	// foundPath overrides Path() for backward compatibility when locating existing backups
-	foundPath string
 }
 
 var _ BackupInterface = (*LocalBackup)(nil)
@@ -31,7 +29,6 @@ func NewLocal(client remote.Client, uuid string, ignore string) *LocalBackup {
 			Ignore:  ignore,
 			adapter: LocalBackupAdapter,
 		},
-		foundPath: "", // Initialize foundPath
 	}
 }
 
@@ -53,37 +50,19 @@ func LocateLocal(client remote.Client, uuid string) (*LocalBackup, os.FileInfo, 
 		return b, st, nil
 	}
 
-	// BACKWARD COMPATIBILITY: Try other formats if current format not found
+	// BACKWARD COMPATIBILITY: uncompressed backups are stored as <uuid>.tar.
 	if os.IsNotExist(err) {
-		// Try all possible extensions for backward compatibility
-		possibleExtensions := []string{".tar.gz", ".tar"}
-		baseDir := config.Get().System.BackupDirectory
-
-		for _, ext := range possibleExtensions {
-			backupPath := path.Join(baseDir, uuid+ext)
-			if st, err := os.Stat(backupPath); err == nil {
-				if st.IsDir() {
-					return nil, nil, errors.New("invalid archive, is directory")
-				}
-
-				// Create backup instance with found path
-				backup := NewLocal(client, uuid, "")
-				// Override the path to the actually found file
-				backup.foundPath = backupPath
-				return backup, st, nil
+		tarPath := path.Join(config.Get().System.BackupDirectory, b.Uuid+".tar")
+		if st, terr := os.Stat(tarPath); terr == nil {
+			if st.IsDir() {
+				return nil, nil, errors.New("invalid archive, is directory")
 			}
+			b.foundPath = tarPath
+			return b, st, nil
 		}
 	}
 
 	return nil, nil, err
-}
-
-// Path returns the path for this LocalBackup, considering foundPath override
-func (b *LocalBackup) Path() string {
-	if b.foundPath != "" {
-		return b.foundPath // Use discovered path for backward compatibility
-	}
-	return b.Backup.Path() // Use standard path generation
 }
 
 // Remove removes a backup from the system.
