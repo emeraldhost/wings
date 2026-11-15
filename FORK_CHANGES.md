@@ -4,8 +4,8 @@ This file tracks **which changes are our own** (EmeraldHost-specific) versus ups
 [`pterodactyl/wings`](https://github.com/pterodactyl/wings). Use it during upgrades so
 our customizations are **not accidentally reverted** when pulling in upstream changes.
 
-- **Baseline for this comparison:** upstream tag **`v1.13.4`** (`747bc43`)
-- **Last reviewed:** 2026-10-14
+- **Baseline for this comparison:** upstream tag **`v1.13.5`** (`86ab5f4`)
+- **Last reviewed:** 2026-11-15
 - **Repo vs. module path:** the repo is `github.com/emeraldhost/wings`; the Go module path is
   `github.com/Rene-Roscher/wings` (upstream is `github.com/pterodactyl/wings`). Version is injected at
   build time via ldflags (`-X .../system.Version=<tag>`); `system/const.go` stays `develop` and is **not** a divergence.
@@ -31,6 +31,8 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 > v1.13.4 was a broad hardening release (153 files) with 24 conflicted files, including the whole
 > backup/restore/archive path. Rows marked *(v1.13.4)* in §1 record where fork and upstream code now
 > interlock; §4 lists what v1.13.4 brought in as plain upstream code.
+> v1.13.5 only touched `cmd/configure.go` (+ test) and merged without conflicts; the line counts and
+> per-file notes above that mention v1.13.4 are unaffected by it.
 
 ---
 
@@ -171,6 +173,7 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 |------|---------|
 | `internal/network/*` (`LimitListener`, address/allowlist helpers), SFTP connection limits in `sftp/server.go`, websocket write lock/deadline/throttling, `server/filesystem/ignore.go` (`ValidateIgnore`, ignore limits), `server/mounts.go` mount validation, `system/locker.go` `ErrLockerDestroyed`, `internal/cron/delivery.go`, `internal/ufs` link-containment work, `server/filesystem/compress.go` rewrite (and removal of `archiverext/`), `server/listeners.go`, `router/websocket/listeners.go`, `config/config.go` `PanelConfiguration` | **Upstream v1.13.4** hardening, module rename only. `sftp/server.go`, `server/listeners.go`, `router/websocket/listeners.go`, `server/filesystem/{compress,errors}.go` are byte-identical to upstream apart from imports — keep them that way. The ~60 new `*_test.go` files of v1.13.4 are upstream suites. (`internal/progress/progress.go` is the exception under `internal/` — fork-modified, see §1.2.) |
 | `.github/workflows/lint.yaml`, `.golangci.yml` | **Upstream v1.13.4**, adopted unchanged: golangci-lint v2 (standard linters + `gosec`, `gofmt` formatter) on push/PR to `develop`. The fork adds **no** `exclusions.rules`; fork findings are fixed in code, and deliberate exceptions carry a targeted `//nolint:<linter> // <reason>` comment (diff `git grep -n nolint` against upstream to list them). Keep it that way: no disabling linters or the formatter for fork code. |
+| `cmd/configure.go` → `allowed_mounts` taken from the Panel response in `writePanelConfiguration` (local `system.data` kept); `TestConfigureAppliesPanelMounts` / `TestConfigureClearsRemovedMounts` in `cmd/configure_test.go` | **Upstream v1.13.5** (`02cd53c`, `3236480`). Module rename only. Only `wings configure` on the host applies Panel mounts; remote config updates (`postUpdateConfiguration`) still ignore them. |
 | `config/config.go` → `ResolveToken(remote bool)`; `remote/http.go` → `Client.SetCredentials()` + mutex-guarded credentials; `router/router_system.go` → token re-resolve/empty-token guard/credential rotation in `postUpdateConfiguration` | **Upstream v1.13.3** master-key-rotation cluster (`07ce5fe`, `392e52c`, `3e6c2c9`). Fork edit: module rename only. |
 | `sftp/handler.go` → `setstatMode()` + `sftpAttributeExtended` rejection | **Upstream v1.13.3** (`da1a216`) hardening. The fork's `publisher` wiring in `NewHandler` sits in the same file — both must survive a merge. |
 | `environment/docker/cgroup_burst.go` (+ test), `applyCpuBurst`/`clearCpuBurst`/`SetCpuBurst` call sites in `container.go`/`power.go`/`server/install.go`, `config_docker.go` → `CpuPeriod`/`CpuBurst`/`CpuShares`, `environment/settings.go` quota math | **Upstream v1.13.3** CPU allocation work (`2cc8a10`, `6987d5e`). Module rename only. |

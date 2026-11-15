@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.13.5
+### Changed
+* `wings configure` now takes the node's allowed mounts from the Panel and writes them to `allowed_mounts`, replacing the existing list (mounts removed in the Panel are removed from the config). The local `system.data` directory is kept, so a stale daemon base in the Panel cannot move existing servers. Mounts are only applied when configure is run on the host, never through a remote configuration update.
+
 ## v1.13.4
 ### Security
 * Broad upstream hardening release (incl. advisory GHSA-8m75-v66f-m43j): file and archive operations are contained against symlink/hard-link escapes, ignore lists (`.pteroignore`, backup ignore) are validated and size/time-limited, decompression was rewritten, and quota/disk-usage accounting no longer follows links.
