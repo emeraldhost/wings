@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -307,4 +308,46 @@ func TestDownloadWithoutEventsPublishesNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, New(s, DownloadRequest{Directory: "/", URL: u, FileName: "missing.jar"}).Execute())
 	require.Empty(t, events())
+}
+
+// A download cancelled through the API while it is running is reported as
+// cancelled, not as a write or request failure.
+func TestDownloadCancelledSendsCancelledEvent(t *testing.T) {
+	s := newPullTestServer(t)
+	events := pullEvents(t, s)
+
+	release := make(chan struct{})
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1048576")
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1024))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(release); origin.Close() })
+
+	u, err := url.Parse(origin.URL + "/big.jar")
+	require.NoError(t, err)
+	dl := New(s, DownloadRequest{Directory: "/", URL: u, FileName: "big.jar"})
+	dl.EnableEvents()
+	done := make(chan error, 1)
+	go func() { done <- dl.Execute() }()
+
+	require.Eventually(t, func() bool { return dl.Progress() > 0 }, 5*time.Second, 5*time.Millisecond)
+	dl.Cancel()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled download did not return")
+	}
+
+	evs := events()
+	require.NotEmpty(t, evs)
+	last := evs[len(evs)-1]
+	require.Equal(t, "failed", last.Status)
+	require.Equal(t, failureCancelled, last.Error)
+	require.Equal(t, "big.jar", last.Filename)
 }

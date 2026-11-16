@@ -145,6 +145,7 @@ Progress of a remote file pull (`POST /api/servers/:server/files/pull` with `for
   - `blocked`: the destination is an internal address and not on the node's allowlist
   - `request_failed`: the request failed (unreachable or unresolvable host, too many redirects, empty file, …)
   - `write_failed`: the file could not be written (e.g. disk limit reached, denied path)
+  - `cancelled`: the download was cancelled (`DELETE /api/servers/:server/files/pull/:download`)
 
   Example failed event:
   ```json

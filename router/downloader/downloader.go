@@ -135,6 +135,7 @@ const (
 	failureBlocked         = "blocked"
 	failureRequestFailed   = "request_failed"
 	failureWriteFailed     = "write_failed"
+	failureCancelled       = "cancelled"
 )
 
 // Maximum download size: 15GB (configurable if needed)
@@ -316,7 +317,14 @@ func (dl *Download) Execute() (err error) {
 	// The final "completed"/"failed" event is sent on every return, including
 	// failures before the filename is known, so the client never waits for a
 	// download that is no longer running.
-	defer func() { dl.finish(err, stage, bytesTotal) }()
+	defer func() {
+		// A download cancelled through the API (Cancel) fails with whatever the
+		// request or write returned; report it as cancelled instead.
+		if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+			stage = failureCancelled
+		}
+		dl.finish(err, stage, bytesTotal)
+	}()
 
 	// SECURITY: Follow redirects manually to ensure each redirect target goes through SSRF validation
 	// Our DialContext checks prevent redirects to internal networks (127.0.0.1, 10.0.0.0/8, etc)
@@ -599,13 +607,19 @@ func (dl *Download) finish(err error, stage string, bytesTotal int64) {
 	var reason string
 	if err != nil {
 		reason = failureReason(err, stage)
-		dl.server.Log().WithFields(log.Fields{
+		entry := dl.server.Log().WithFields(log.Fields{
 			"download_id": dl.Identifier,
 			"file":        dl.eventFilename(),
 			"host":        dl.req.URL.Hostname(),
 			"reason":      reason,
 			"error":       loggableError(err),
-		}).Warn("failed to pull remote file")
+		})
+		if reason == failureCancelled {
+			// Cancelled through the API, not a failure worth a warning.
+			entry.Debug("pull of remote file was cancelled")
+		} else {
+			entry.Warn("failed to pull remote file")
+		}
 	}
 
 	dl.mu.Lock()
@@ -631,6 +645,9 @@ func (dl *Download) finish(err error, stage string, bytesTotal int64) {
 // download failed in.
 func failureReason(err error, stage string) string {
 	switch {
+	case stage == failureCancelled:
+		// Whatever error the cancelled request or write returned.
+		return failureCancelled
 	case errors.Is(err, ErrInvalidFilename):
 		return failureInvalidFilename
 	case errors.Is(err, ErrFileTooLarge):
