@@ -17,11 +17,11 @@ import (
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/gorilla/websocket"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/router/tokens"
+	"github.com/emeraldhost/wings/server"
 )
 
 const (

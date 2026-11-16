@@ -13,13 +13,13 @@ import (
 	"github.com/apex/log"
 	"github.com/gin-gonic/gin"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/internal/models"
-	"github.com/Rene-Roscher/wings/remote"
-	wserver "github.com/Rene-Roscher/wings/server"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/internal/models"
+	"github.com/emeraldhost/wings/remote"
+	wserver "github.com/emeraldhost/wings/server"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 func init() {

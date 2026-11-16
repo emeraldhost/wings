@@ -1,6 +1,9 @@
 # Changelog
 
 ## v1.13.5.1
+### Changed
+* The Go module path is now `github.com/emeraldhost/wings`, matching the repository. No functional changes; builds that set `system.Version` via ldflags must use `-X github.com/emeraldhost/wings/system.Version=<version>`.
+
 ### Fixed
 * Remote file downloads of files with `+` in their name (many Fabric/Forge mods, e.g. `fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar` or `…+mc1.21.jar`) no longer fail silently; `+` is now an allowed filename character.
 * A background download that fails before it started (refused filename, unreachable or blocked host, error status, too large) now sends a final `download progress` event with status `failed`, so the Panel no longer shows it at 0 % forever. Failed events carry a new optional `error` field with a short reason (`invalid_filename`, `bad_status`, `too_large`, `blocked`, `request_failed`, `write_failed`, `cancelled`), and the failure is logged at warn level (host only, no full URL).

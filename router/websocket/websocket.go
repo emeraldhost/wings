@@ -10,20 +10,20 @@ import (
 	"time"
 
 	"emperror.dev/errors"
-	"github.com/Rene-Roscher/wings/internal/models"
 	"github.com/apex/log"
+	"github.com/emeraldhost/wings/internal/models"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/system"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/environment/docker"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/environment/docker"
+	"github.com/emeraldhost/wings/router/tokens"
+	"github.com/emeraldhost/wings/server"
 )
 
 const (

@@ -14,9 +14,9 @@ import (
 	ws "github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	"github.com/Rene-Roscher/wings/router/websocket"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/router/tokens"
+	"github.com/emeraldhost/wings/router/websocket"
 )
 
 // authenticationMessageFor returns an authentication message carrying a token

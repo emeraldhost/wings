@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 // diskUsage returns the actual size of the files in the server's directory.

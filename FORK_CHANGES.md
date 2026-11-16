@@ -6,8 +6,8 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 
 - **Baseline for this comparison:** upstream tag **`v1.13.5`** (`86ab5f4`)
 - **Last reviewed:** 2026-11-15
-- **Repo vs. module path:** the repo is `github.com/emeraldhost/wings`; the Go module path is
-  `github.com/Rene-Roscher/wings` (upstream is `github.com/pterodactyl/wings`). Version is injected at
+- **Repo and module path:** both the repo and the Go module path are `github.com/emeraldhost/wings`
+  (upstream is `github.com/pterodactyl/wings`). Version is injected at
   build time via ldflags (`-X .../system.Version=<tag>`); `system/const.go` stays `develop` and is **not** a divergence.
 - **How to regenerate the picture:**
   ```bash
@@ -42,10 +42,10 @@ our customizations are **not accidentally reverted** when pulling in upstream ch
 
 | Path | What | Note |
 |------|------|------|
-| `go.mod` | `module github.com/pterodactyl/wings` → `github.com/Rene-Roscher/wings` | Root of the rename; every Go import of the module changes accordingly. |
-| `Dockerfile`, `Makefile`, `.github/workflows/push.yaml` | ldflags `-X …/system.Version` / `SRC_PATH` use the `Rene-Roscher` module. Otherwise identical to upstream v1.13.4: on merge, take upstream and re-apply the path. | Required so `system.Version` is injected and builds resolve. The fork-only `binary.yaml` sets the same ldflags path. `release.yaml`, `binary.yaml`, `docker.yaml` are full fork rewrites, see §1.4. |
-| `README.md` ("Installation" section), `cmd/root.go` (startup banner Source/License) | Point at the **repo** `github.com/emeraldhost/wings`, not the module path. Release assets are `wings_linux_{amd64,arm64}` + `SHA256SUMS` (no plain `wings` asset). | Repo URL ≠ module path: only `go.mod`/imports/ldflags use `Rene-Roscher`. |
-| ~every `*.go` file | `github.com/pterodactyl/wings/...` → `github.com/Rene-Roscher/wings/...` | **Incidental noise** — appears as conflicts on most merges but carries no behavior. Always "keep ours (Rene-Roscher)". E.g. `wings.go` differs only by its `cmd` import (upstream v1.13.4 dropped `rand.Seed` there — do not re-add it). After the rename, re-run `gofmt` (§5). |
+| `go.mod` | `module github.com/pterodactyl/wings` → `github.com/emeraldhost/wings` | Root of the rename; every Go import of the module changes accordingly. |
+| `Dockerfile`, `Makefile`, `.github/workflows/push.yaml` | ldflags `-X …/system.Version` / `SRC_PATH` use the `emeraldhost` module. Otherwise identical to upstream v1.13.4: on merge, take upstream and re-apply the path. | Required so `system.Version` is injected and builds resolve. The fork-only `binary.yaml` sets the same ldflags path. `release.yaml`, `binary.yaml`, `docker.yaml` are full fork rewrites, see §1.4. |
+| `README.md` ("Installation" section), `cmd/root.go` (startup banner Source/License) | Point at the repo `github.com/emeraldhost/wings`. Release assets are `wings_linux_{amd64,arm64}` + `SHA256SUMS` (no plain `wings` asset). | Repo URL and module path are the same. |
+| ~every `*.go` file | `github.com/pterodactyl/wings/...` → `github.com/emeraldhost/wings/...` | **Incidental noise** — appears as conflicts on most merges but carries no behavior. Always "keep ours (emeraldhost)". E.g. `wings.go` differs only by its `cmd` import (upstream v1.13.4 dropped `rand.Seed` there — do not re-add it). After the rename, re-run `gofmt` (§5). |
 
 ### 1.2 Backup subsystem — the largest divergence
 
@@ -201,10 +201,10 @@ fork changes risks duplicating or mis-merging them on the next upgrade.
 ## 5. Upgrade merge checklist
 
 1. `git fetch upstream --tags`, then `git merge <upstream-tag>` on an `upgrade-<version>` branch; resolve per §1 (backup/archiver areas: keep ours, graft upstream fixes).
-2. Rename leaked imports: `github.com/pterodactyl/wings` → `github.com/Rene-Roscher/wings` in every `.go` file (new upstream files arrive with the old path). Verify with `git grep -n 'github.com/pterodactyl/wings' -- '*.go' go.mod` — must print nothing. (A looser `pterodactyl/wings` grep also hits the log path `/var/log/pterodactyl/wings.log` in `cmd/diagnostics.go`; that stays.)
-3. **Run `gofmt -w` (or `goimports -w`) on the renamed files.** The rename changes import sort order (`github.com/Rene-Roscher/...` sorts before `github.com/apex`/`gin-gonic`/...). On Windows, check against an LF export of the index (`git -c core.autocrlf=false checkout-index -a --prefix=<tmp>/` then `gofmt -l <tmp>`), since the CRLF working tree reports every file.
+2. Rename leaked imports: `github.com/pterodactyl/wings` → `github.com/emeraldhost/wings` in every `.go` file (new upstream files arrive with the old path). Verify with `git grep -n 'github.com/pterodactyl/wings' -- '*.go' go.mod` — must print nothing. (A looser `pterodactyl/wings` grep also hits the log path `/var/log/pterodactyl/wings.log` in `cmd/diagnostics.go`; that stays.)
+3. **Run `gofmt -w` (or `goimports -w`) on the renamed files.** The rename changes import sort order (`github.com/emeraldhost/...` sorts between `github.com/docker` and `github.com/gin-gonic`, not where `pterodactyl` sorted). On Windows, check against an LF export of the index (`git -c core.autocrlf=false checkout-index -a --prefix=<tmp>/` then `gofmt -l <tmp>`), since the CRLF working tree reports every file.
 4. `GOOS=linux go build ./...` and `GOOS=linux go vet ./...` (both work from Windows); `go test -race ./...` must run on Linux — a Linux host, WSL, or a `golang:<version>` Docker container with the repo mounted.
 5. If the merge touched `environment/docker/environment.go`, `environment/environment.go` or `router/router_server_backup.go`: run `go test ./environment/docker -run SetState` and check by eye that in all three `Register()` call sites the `registry.Complete`/`cancel` `defer` comes before `if wasQueued { … SetState … }`, and that both restore goroutines open with a top-level `recover`.
 6. `make lint` (= `GOOS=linux golangci-lint run ./...`) with the version pinned in `lint.yaml` (currently v2.11.4) must report 0 issues **before** opening the upgrade PR. Always lint with `GOOS=linux`: a bare run on Windows/macOS skips the `_linux`/`_unix` files CI checks.
 7. Update this file (baseline tag; §4 for adopted upstream code; remove fixed items from §3, moving any lasting invariant into §1) and write the `CHANGELOG.md` section. Re-verify every "byte-identical" / "unchanged" / "module rename only" claim in §4 against the new tag — for each path this must print nothing:
-   `git diff --ignore-cr-at-eol <upstream-tag> HEAD -- <path> | grep -E '^[+-]' | grep -vE '^(\+\+\+|---) ' | grep -vE 'Rene-Roscher|pterodactyl/wings'`
+   `git diff --ignore-cr-at-eol <upstream-tag> HEAD -- <path> | grep -E '^[+-]' | grep -vE '^(\+\+\+|---) ' | grep -vE 'emeraldhost/wings|pterodactyl/wings'`

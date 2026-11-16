@@ -10,8 +10,8 @@ import (
 	"github.com/apex/log"
 	"github.com/apex/log/handlers/memory"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/events"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/events"
 )
 
 // setupMountTest creates a directory to hold mount sources and points the

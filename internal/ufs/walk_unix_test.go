@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 // A directory that is removed after it has been listed, but before the walk

@@ -9,7 +9,7 @@ import (
 	"github.com/apex/log"
 	pkgsftp "github.com/pkg/sftp"
 
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/server"
 )
 
 type writeAtFunc func([]byte, int64) (int, error)

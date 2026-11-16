@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Rene-Roscher/wings/cmd"
+	"github.com/emeraldhost/wings/cmd"
 )
 
 func main() {

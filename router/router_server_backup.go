@@ -18,13 +18,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	wnet "github.com/Rene-Roscher/wings/internal/network"
-	"github.com/Rene-Roscher/wings/router/middleware"
-	"github.com/Rene-Roscher/wings/server"
-	"github.com/Rene-Roscher/wings/server/backup"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	wnet "github.com/emeraldhost/wings/internal/network"
+	"github.com/emeraldhost/wings/router/middleware"
+	"github.com/emeraldhost/wings/server"
+	"github.com/emeraldhost/wings/server/backup"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 // isValidBackupContentType is now replaced by backup.IsValidBackupContentType

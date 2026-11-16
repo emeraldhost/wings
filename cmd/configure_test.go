@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
+	"github.com/emeraldhost/wings/config"
 )
 
 // useConfigureArgs points the configure command at a fake Panel and the given

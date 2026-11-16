@@ -11,8 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/server"
 )
 
 // On a signal the server states are saved and the HTTP server stops, so that

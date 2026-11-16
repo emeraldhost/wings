@@ -17,9 +17,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server"
 )
 
 const pullTestServerUuid = "ffffffff-ffff-4fff-8fff-ffffffffffff"

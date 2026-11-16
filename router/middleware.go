@@ -3,8 +3,8 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/Rene-Roscher/wings/router/middleware"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/router/middleware"
+	"github.com/emeraldhost/wings/server"
 )
 
 // ExtractServer returns the server instance from the gin context. If there is

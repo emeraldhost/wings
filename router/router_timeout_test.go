@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/server"
 )
 
 func startTimeoutTestServer(t *testing.T) string {

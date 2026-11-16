@@ -16,7 +16,7 @@ import (
 	"github.com/klauspost/compress/zip"
 	"github.com/mholt/archives"
 
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 // CompressFiles compresses all the files matching the given paths in the

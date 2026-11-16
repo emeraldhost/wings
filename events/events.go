@@ -6,7 +6,7 @@ import (
 
 	"emperror.dev/errors"
 
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Event represents an Event sent over a Bus.

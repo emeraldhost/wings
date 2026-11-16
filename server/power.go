@@ -8,9 +8,9 @@ import (
 	"emperror.dev/errors"
 	"github.com/google/uuid"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/system"
 )
 
 type PowerAction string

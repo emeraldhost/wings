@@ -1,8 +1,8 @@
 package server
 
 import (
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Defines all the possible output events for a server.

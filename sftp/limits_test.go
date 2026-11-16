@@ -3,7 +3,7 @@ package sftp
 import (
 	"testing"
 
-	"github.com/Rene-Roscher/wings/config"
+	"github.com/emeraldhost/wings/config"
 )
 
 func TestConfiguredLimits(t *testing.T) {

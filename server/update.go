@@ -3,9 +3,9 @@ package server
 import (
 	"time"
 
-	"github.com/Rene-Roscher/wings/environment/docker"
+	"github.com/emeraldhost/wings/environment/docker"
 
-	"github.com/Rene-Roscher/wings/environment"
+	"github.com/emeraldhost/wings/environment"
 )
 
 // SyncWithEnvironment updates the environment for the server to match any of

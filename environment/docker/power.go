@@ -11,8 +11,8 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/remote"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/remote"
 )
 
 // OnBeforeStart run before the container starts and get the process

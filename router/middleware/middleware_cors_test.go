@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
+	"github.com/emeraldhost/wings/config"
 )
 
 func newCORSTestEngine(t *testing.T, configure func(cfg *config.Configuration)) *gin.Engine {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/server"
 )
 
 func newManagerTestTransfer(t *testing.T, uuid string) *Transfer {

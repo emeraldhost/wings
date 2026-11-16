@@ -8,10 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/internal/progress"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/internal/progress"
+	"github.com/emeraldhost/wings/system"
 )
 
 // mockEnvironment is a minimal mock implementation for testing

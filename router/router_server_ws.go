@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"emperror.dev/errors"
-	"github.com/Rene-Roscher/wings/router/middleware"
-	"github.com/Rene-Roscher/wings/router/websocket"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/router/middleware"
+	"github.com/emeraldhost/wings/router/websocket"
+	"github.com/emeraldhost/wings/server"
 	"github.com/gin-gonic/gin"
 	ws "github.com/gorilla/websocket"
 	"golang.org/x/time/rate"

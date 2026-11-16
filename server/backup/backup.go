@@ -15,9 +15,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 type AdapterType string

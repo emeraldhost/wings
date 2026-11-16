@@ -17,8 +17,8 @@ import (
 	"gopkg.in/ini.v1"
 	"gopkg.in/yaml.v3"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 // The file parsing options that are available for a server configuration file.

@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Rene-Roscher/wings/internal/progress"
 	"github.com/apex/log"
+	"github.com/emeraldhost/wings/internal/progress"
 )
 
 // SimpleProgressTracker - ultra-lightweight progress tracking with ZERO overhead

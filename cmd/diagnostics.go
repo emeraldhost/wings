@@ -23,10 +23,10 @@ import (
 	"github.com/docker/docker/pkg/parsers/operatingsystem"
 	"github.com/spf13/cobra"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/loggers/cli"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/loggers/cli"
+	"github.com/emeraldhost/wings/system"
 )
 
 const (

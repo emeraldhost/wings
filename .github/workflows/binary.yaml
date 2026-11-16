@@ -82,8 +82,8 @@ jobs:
             GOARCH="$arch" go build \
               -o "dist/wings_linux_${arch}" \
               -v -trimpath \
-              -ldflags="-s -w -X github.com/Rene-Roscher/wings/system.Version=${VERSION}" \
-              github.com/Rene-Roscher/wings
+              -ldflags="-s -w -X github.com/emeraldhost/wings/system.Version=${VERSION}" \
+              github.com/emeraldhost/wings
             chmod 755 "dist/wings_linux_${arch}"
           done
 
