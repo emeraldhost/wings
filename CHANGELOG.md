@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.5.1
+### Fixed
+* Remote file downloads of files with `+` in their name (many Fabric/Forge mods, e.g. `fabric-language-kotlin-1.14.2+kotlin.2.4.21.jar` or `…+mc1.21.jar`) no longer fail silently; `+` is now an allowed filename character.
+* A background download that fails before it started (refused filename, unreachable or blocked host, error status, too large) now sends a final `download progress` event with status `failed`, so the Panel no longer shows it at 0 % forever. Failed events carry a new optional `error` field with a short reason (`invalid_filename`, `bad_status`, `too_large`, `blocked`, `request_failed`, `write_failed`), and the failure is logged at warn level (host only, no full URL).
+* `download progress` events for files of unknown size now report `bytes_total: 0` as documented, instead of `-1`.
+
 ## v1.13.5
 ### Changed
 * `wings configure` now takes the node's allowed mounts from the Panel and writes them to `allowed_mounts`, replacing the existing list (mounts removed in the Panel are removed from the config). The local `system.data` directory is kept, so a stale daemon base in the Panel cannot move existing servers. Mounts are only applied when configure is run on the host, never through a remote configuration update.
