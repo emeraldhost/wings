@@ -16,12 +16,12 @@ import (
 	"github.com/asaskevich/govalidator"
 	"github.com/creasty/defaults"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server/filesystem"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server/filesystem"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Server is the high level definition for a server instance being controlled

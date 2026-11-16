@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Sftp returns the SFTP connection bag for the server instance. This bag tracks

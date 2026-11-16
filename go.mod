@@ -1,4 +1,4 @@
-module github.com/Rene-Roscher/wings
+module github.com/emeraldhost/wings
 
 go 1.26.0
 

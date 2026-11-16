@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/Rene-Roscher/wings/server/backup"
+	"github.com/emeraldhost/wings/server/backup"
 )
 
 func TestIsValidBackupContentType(t *testing.T) {

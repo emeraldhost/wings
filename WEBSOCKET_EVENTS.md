@@ -136,7 +136,22 @@ Progress of a remote file pull (`POST /api/servers/:server/files/pull` with `for
 }
 ```
 
-- `status`: `"downloading"`, `"completed"` (percentage 100) or `"failed"` (percentage -1); a final event is always sent
+- `status`: `"downloading"`, `"completed"` (percentage 100) or `"failed"` (percentage -1); a final event is always sent, also when the download fails before it started (then `"failed"` is the only event)
+- `filename`: the sanitized name once known; for a download that failed before that, the requested name (or the last segment of the URL)
+- `error`: only present on `"failed"` events, a short reason safe to show to customers:
+  - `invalid_filename`: the file name was refused (allowed: `a-z A-Z 0-9 - _ . +`, no leading dot, no `..`, max. 255 characters)
+  - `bad_status`: the remote server answered with a status other than 200
+  - `too_large`: the file exceeds the 15 GB limit
+  - `blocked`: the destination is an internal address and not on the node's allowlist
+  - `request_failed`: the request failed (unreachable or unresolvable host, too many redirects, empty file, …)
+  - `write_failed`: the file could not be written (e.g. disk limit reached, denied path)
+  - `cancelled`: the download was cancelled (`DELETE /api/servers/:server/files/pull/:download`)
+
+  Example failed event:
+  ```json
+  { "identifier": "download-uuid", "filename": "mod+mc1.21.jar", "directory": "mods", "url": "https://example.com/mod%2Bmc1.21.jar",
+    "percentage": -1, "bytes_written": 0, "bytes_total": 0, "status": "failed", "error": "bad_status" }
+  ```
 - Throttled to 250 ms; `bytes_total` is 0 when the size is unknown
 - Requires the `file.read` permission
 

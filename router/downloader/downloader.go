@@ -20,9 +20,9 @@ import (
 	"github.com/apex/log"
 	"github.com/google/uuid"
 
-	"github.com/Rene-Roscher/wings/config"
-	wnet "github.com/Rene-Roscher/wings/internal/network"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	wnet "github.com/emeraldhost/wings/internal/network"
+	"github.com/emeraldhost/wings/server"
 )
 
 var client *http.Client
@@ -123,6 +123,19 @@ const (
 	ErrDownloadFailed     = errors.Sentinel("downloader: download request failed")
 	ErrInvalidFilename    = errors.Sentinel("downloader: invalid or unsafe filename")
 	ErrFileTooLarge       = errors.Sentinel("downloader: file exceeds maximum allowed size")
+	ErrBadStatus          = errors.Sentinel("downloader: got bad response status from endpoint")
+)
+
+// Reasons sent in the "error" field of a failed download progress event. They
+// are shown to customers, so they never contain URLs or internal details.
+const (
+	failureInvalidFilename = "invalid_filename"
+	failureBadStatus       = "bad_status"
+	failureTooLarge        = "too_large"
+	failureBlocked         = "blocked"
+	failureRequestFailed   = "request_failed"
+	failureWriteFailed     = "write_failed"
+	failureCancelled       = "cancelled"
 )
 
 // Maximum download size: 15GB (configurable if needed)
@@ -150,6 +163,9 @@ type DownloadProgressUpdate struct {
 	BytesWritten int64  `json:"bytes_written"`
 	BytesTotal   int64  `json:"bytes_total"`
 	Status       string `json:"status"` // "downloading", "completed", "failed"
+	// Error is a short reason for a failed download (one of the failure*
+	// constants); empty otherwise.
+	Error string `json:"error,omitempty"`
 }
 
 type DownloadRequest struct {
@@ -261,13 +277,15 @@ func sanitizeFilename(filename string) (string, error) {
 		return "", errors.WithStack(ErrInvalidFilename)
 	}
 
-	// Whitelist approach: only allow alphanumeric, dash, underscore, and single dot
-	// This prevents special characters that might be exploited
+	// Whitelist approach: only allow alphanumeric, dash, underscore, plus and
+	// single dots. "+" is needed for many mod files (e.g. "1.14.2+kotlin.2.4.21",
+	// "+mc1.21") and has no special meaning in a file name. Spaces, quotes, shell
+	// metacharacters and "%" stay rejected.
 	for i, c := range clean {
 		valid := (c >= 'a' && c <= 'z') ||
 			(c >= 'A' && c <= 'Z') ||
 			(c >= '0' && c <= '9') ||
-			c == '-' || c == '_' || c == '.'
+			c == '-' || c == '_' || c == '.' || c == '+'
 
 		if !valid {
 			return "", errors.Wrap(ErrInvalidFilename, fmt.Sprintf("invalid character at position %d: %c", i, c))
@@ -284,10 +302,29 @@ func sanitizeFilename(filename string) (string, error) {
 
 // Execute executes a given download for the server and begins writing the file to the disk. Once
 // completed the download will be removed from the cache.
-func (dl *Download) Execute() error {
+//
+// err is a named return value on purpose: the deferred finish call reports the
+// error that is actually returned, however Execute returns.
+func (dl *Download) Execute() (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Hour*12)
 	dl.cancelFunc = &cancel
 	defer dl.Cancel()
+
+	// The size of the remote file once a response arrived (0 before that, -1 if
+	// unknown), and the reason reported if the current step fails.
+	var bytesTotal int64
+	stage := failureRequestFailed
+	// The final "completed"/"failed" event is sent on every return, including
+	// failures before the filename is known, so the client never waits for a
+	// download that is no longer running.
+	defer func() {
+		// A download cancelled through the API (Cancel) fails with whatever the
+		// request or write returned; report it as cancelled instead.
+		if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+			stage = failureCancelled
+		}
+		dl.finish(err, stage, bytesTotal)
+	}()
 
 	// SECURITY: Follow redirects manually to ensure each redirect target goes through SSRF validation
 	// Our DialContext checks prevent redirects to internal networks (127.0.0.1, 10.0.0.0/8, etc)
@@ -295,11 +332,12 @@ func (dl *Download) Execute() error {
 	currentURL := dl.req.URL.String()
 
 	var res *http.Response
-	var err error
 
 	for redirectCount := 0; redirectCount <= maxRedirects; redirectCount++ {
-		// Create request for current URL (goes through SSRF-protected DialContext)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, currentURL, nil)
+		// Create request for current URL (goes through SSRF-protected DialContext).
+		// Assigned, not declared, so no err inside the loop shadows the result.
+		var req *http.Request
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, currentURL, nil)
 		if err != nil {
 			return errors.WrapIf(err, "downloader: failed to create request")
 		}
@@ -323,10 +361,10 @@ func (dl *Download) Execute() error {
 			}
 
 			// Parse redirect URL (may be relative)
-			redirectURL, err := url.Parse(location)
-			if err != nil {
+			redirectURL, perr := url.Parse(location)
+			if perr != nil {
 				res.Body.Close()
-				return errors.Wrap(err, "downloader: invalid redirect Location")
+				return errors.Wrap(perr, "downloader: invalid redirect Location")
 			}
 
 			// Resolve against current URL (handles relative redirects like /path)
@@ -356,7 +394,7 @@ func (dl *Download) Execute() error {
 		// Not a redirect - check for success
 		if res.StatusCode != http.StatusOK {
 			res.Body.Close()
-			return errors.New("downloader: got bad response status from endpoint: " + res.Status)
+			return errors.WithStack(fmt.Errorf("%w: %s", ErrBadStatus, res.Status))
 		}
 
 		// Success! Break out of redirect loop
@@ -368,6 +406,7 @@ func (dl *Download) Execute() error {
 		return errors.New("downloader: no response received")
 	}
 	defer res.Body.Close()
+	bytesTotal = res.ContentLength
 
 	// Check ContentLength:
 	// - ContentLength > 0: known size
@@ -392,6 +431,7 @@ func (dl *Download) Execute() error {
 	}
 
 	// SECURITY: Extract filename from various sources and sanitize ALL of them
+	stage = failureInvalidFilename
 	var unsafeFilename string
 
 	if dl.req.UseHeader {
@@ -437,45 +477,18 @@ func (dl *Download) Execute() error {
 		"safe_filename":   safeFilename,
 	}).Debug("sanitized download filename")
 
-	// Send initial WebSocket event (if enabled for background downloads)
+	stage = failureWriteFailed
+
+	// Send initial WebSocket event (if enabled for background downloads). The
+	// final event is sent by the deferred finish call.
+	dl.mu.Lock()
 	if dl.sendEvents {
-		dl.mu.Lock()
-		dl.sendProgressEvent(0, 0, res.ContentLength, "downloading")
-		dl.mu.Unlock()
+		dl.sendProgressEvent(0, 0, res.ContentLength, "downloading", "")
 	}
-
-	// CRITICAL: Defer final event sending (executes at function exit)
-	// Capture error at execution time, not declaration time!
-	defer func() {
-		if dl.sendEvents {
-			dl.mu.Lock()
-			defer dl.mu.Unlock()
-
-			// Determine status based on err (captured at defer execution)
-			var finalStatus string
-			var finalPercentage int
-			if err == nil {
-				finalStatus = "completed"
-				finalPercentage = 100
-			} else {
-				finalStatus = "failed"
-				finalPercentage = -1 // Error indicator
-			}
-
-			// Get final bytes written (from progress)
-			var bytesWritten int64
-			if res.ContentLength > 0 {
-				bytesWritten = int64(dl.progress * float64(res.ContentLength))
-			} else {
-				bytesWritten = int64(dl.progress) // Raw bytes for chunked
-			}
-
-			dl.sendProgressEvent(finalPercentage, bytesWritten, res.ContentLength, finalStatus)
-		}
-	}()
+	dl.mu.Unlock()
 
 	p := dl.Path()
-	if err := dl.server.Filesystem().IsIgnored(p); err != nil {
+	if err = dl.server.Filesystem().IsIgnored(p); err != nil {
 		return err
 	}
 	dl.server.Log().WithField("path", p).Debug("writing remote file to disk")
@@ -577,7 +590,7 @@ func (dl *Download) counter(contentLength int64) *Counter {
 
 		// Send WebSocket progress events (if enabled, with throttling)
 		if dl.sendEvents {
-			dl.sendProgressEvent(percentage, int64(t), contentLength, "downloading")
+			dl.sendProgressEvent(percentage, int64(t), contentLength, "downloading", "")
 		}
 	}
 	return &Counter{
@@ -585,9 +598,100 @@ func (dl *Download) counter(contentLength int64) *Counter {
 	}
 }
 
+// finish logs a failed download and sends the final "completed" or "failed"
+// event if events are enabled. It is deferred at the start of Execute, so it
+// also runs for failures before the request was made or the filename was
+// checked; stage is the reason reported for errors that carry no sentinel, and
+// bytesTotal is the size of the remote file (0 if no response arrived yet).
+func (dl *Download) finish(err error, stage string, bytesTotal int64) {
+	var reason string
+	if err != nil {
+		reason = failureReason(err, stage)
+		entry := dl.server.Log().WithFields(log.Fields{
+			"download_id": dl.Identifier,
+			"file":        dl.eventFilename(),
+			"host":        dl.req.URL.Hostname(),
+			"reason":      reason,
+			"error":       loggableError(err),
+		})
+		if reason == failureCancelled {
+			// Cancelled through the API, not a failure worth a warning.
+			entry.Debug("pull of remote file was cancelled")
+		} else {
+			entry.Warn("failed to pull remote file")
+		}
+	}
+
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+	if !dl.sendEvents {
+		return
+	}
+	status, percentage := "completed", 100
+	if err != nil {
+		status, percentage = "failed", -1
+	}
+	var bytesWritten int64
+	if bytesTotal > 0 {
+		bytesWritten = int64(dl.progress * float64(bytesTotal))
+	} else {
+		bytesWritten = int64(dl.progress) // Raw bytes for an unknown size.
+	}
+	dl.sendProgressEvent(percentage, bytesWritten, bytesTotal, status, reason)
+}
+
+// failureReason maps a download error to the reason sent to the client. Errors
+// with a known cause are reported as that cause, anything else as the step the
+// download failed in.
+func failureReason(err error, stage string) string {
+	switch {
+	case stage == failureCancelled:
+		// Whatever error the cancelled request or write returned.
+		return failureCancelled
+	case errors.Is(err, ErrInvalidFilename):
+		return failureInvalidFilename
+	case errors.Is(err, ErrFileTooLarge):
+		return failureTooLarge
+	case errors.Is(err, ErrInternalResolution):
+		return failureBlocked
+	case errors.Is(err, ErrBadStatus):
+		return failureBadStatus
+	}
+	return stage
+}
+
+// loggableError returns the error message without the full URL a request error
+// carries (it can contain signed query parameters); only the host is kept.
+func loggableError(err error) string {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		host := ""
+		if u, perr := url.Parse(uerr.URL); perr == nil {
+			host = u.Host
+		}
+		return fmt.Sprintf("%s %s: %v", uerr.Op, host, uerr.Err)
+	}
+	return err.Error()
+}
+
+// eventFilename is the name of the file reported in events: the sanitized name
+// once it is known, otherwise the name that was asked for (or taken from the
+// URL), so that the client can match a download that failed early.
+func (dl *Download) eventFilename() string {
+	if dl.path != "" {
+		return dl.path
+	}
+	if dl.req.FileName != "" {
+		return dl.req.FileName
+	}
+	parts := strings.Split(dl.req.URL.Path, "/")
+	return parts[len(parts)-1]
+}
+
 // sendProgressEvent sends a WebSocket event with throttling (250ms between updates)
-// MUST be called with dl.mu held (Lock or RLock)
-func (dl *Download) sendProgressEvent(percentage int, bytesWritten, bytesTotal int64, status string) {
+// MUST be called with dl.mu held (Lock or RLock). reason is only set for a
+// failed download.
+func (dl *Download) sendProgressEvent(percentage int, bytesWritten, bytesTotal int64, status, reason string) {
 	now := time.Now().UnixNano()
 
 	// Throttle: Only send events every 250ms (like backup progress)
@@ -604,15 +708,20 @@ func (dl *Download) sendProgressEvent(percentage int, bytesWritten, bytesTotal i
 	dl.lastEventTime = now
 	dl.lastPercentage = percentage
 
+	// An unknown size (-1) is reported as 0, as documented for clients.
+	if bytesTotal < 0 {
+		bytesTotal = 0
+	}
 	event := DownloadProgressUpdate{
 		Identifier:   dl.Identifier,
-		Filename:     dl.path,
+		Filename:     dl.eventFilename(),
 		Directory:    dl.req.Directory,
 		URL:          dl.req.URL.String(),
 		Percentage:   percentage,
 		BytesWritten: bytesWritten,
 		BytesTotal:   bytesTotal,
 		Status:       status,
+		Error:        reason,
 	}
 
 	// Import server package for DownloadProgressEvent constant

@@ -16,9 +16,9 @@ import (
 	"github.com/juju/ratelimit"
 	"github.com/klauspost/pgzip"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/internal/progress"
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/internal/progress"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 const memory = 4 * 1024

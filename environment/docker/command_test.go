@@ -7,8 +7,8 @@ import (
 
 	"github.com/docker/docker/api/types"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/system"
 )
 
 // attachedEnvironment returns an environment attached to one end of a pipe,

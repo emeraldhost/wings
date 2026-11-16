@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/remote"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/remote"
 )
 
 // setTestConfig stores a configuration for tests that use the global one, so

@@ -5,7 +5,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/internal/ufs"
 )
 
 type quotaFile struct {

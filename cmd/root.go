@@ -28,17 +28,17 @@ import (
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/internal/cron"
-	"github.com/Rene-Roscher/wings/internal/database"
-	"github.com/Rene-Roscher/wings/internal/network"
-	"github.com/Rene-Roscher/wings/loggers/cli"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/router"
-	"github.com/Rene-Roscher/wings/server"
-	"github.com/Rene-Roscher/wings/sftp"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/internal/cron"
+	"github.com/emeraldhost/wings/internal/database"
+	"github.com/emeraldhost/wings/internal/network"
+	"github.com/emeraldhost/wings/loggers/cli"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/router"
+	"github.com/emeraldhost/wings/server"
+	"github.com/emeraldhost/wings/sftp"
+	"github.com/emeraldhost/wings/system"
 )
 
 var (

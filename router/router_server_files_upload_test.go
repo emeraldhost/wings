@@ -18,11 +18,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/internal/database"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/internal/database"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/router/tokens"
+	"github.com/emeraldhost/wings/server"
 )
 
 const uploadTestServerUuid = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"

@@ -5,15 +5,15 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Rene-Roscher/wings/router/tokens"
 	"github.com/apex/log"
+	"github.com/emeraldhost/wings/router/tokens"
 	"github.com/gin-gonic/gin"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/router/middleware"
-	"github.com/Rene-Roscher/wings/server"
-	"github.com/Rene-Roscher/wings/server/installer"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/router/middleware"
+	"github.com/emeraldhost/wings/server"
+	"github.com/emeraldhost/wings/server/installer"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Returns information about the system that wings is running on.

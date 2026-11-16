@@ -12,10 +12,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/system"
 )
 
 type Metadata struct {

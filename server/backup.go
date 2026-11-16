@@ -16,12 +16,12 @@ import (
 	"github.com/apex/log"
 	cerrdefs "github.com/containerd/errdefs"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/internal/progress"
-	"github.com/Rene-Roscher/wings/internal/ufs"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server/backup"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/internal/progress"
+	"github.com/emeraldhost/wings/internal/ufs"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server/backup"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 // Notifies the panel of a backup's state and returns an error if one is encountered

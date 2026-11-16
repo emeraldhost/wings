@@ -8,10 +8,10 @@ import (
 
 	"github.com/apex/log"
 
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/system"
 
-	"github.com/Rene-Roscher/wings/environment"
+	"github.com/emeraldhost/wings/environment"
 )
 
 type diskSpaceLimiter struct {

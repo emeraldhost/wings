@@ -22,10 +22,10 @@ import (
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/internal/network"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/internal/network"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server"
 )
 
 // Usernames all follow the same format, so don't even bother hitting the API if the username is not

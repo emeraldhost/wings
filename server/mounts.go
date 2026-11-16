@@ -11,8 +11,8 @@ import (
 	"emperror.dev/errors"
 	"github.com/apex/log"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
 )
 
 // To avoid confusion when working with mounts, assume that a server.Mount has not been properly

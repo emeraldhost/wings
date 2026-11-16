@@ -7,9 +7,9 @@ import (
 	"emperror.dev/errors"
 	"github.com/apex/log"
 
-	"github.com/Rene-Roscher/wings/internal/database"
-	"github.com/Rene-Roscher/wings/internal/models"
-	"github.com/Rene-Roscher/wings/remote"
+	"github.com/emeraldhost/wings/internal/database"
+	"github.com/emeraldhost/wings/internal/models"
+	"github.com/emeraldhost/wings/remote"
 )
 
 const (

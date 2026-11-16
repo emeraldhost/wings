@@ -3,9 +3,9 @@ package docker
 import (
 	"testing"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/events"
-	"github.com/Rene-Roscher/wings/system"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/events"
+	"github.com/emeraldhost/wings/system"
 )
 
 // Fork: the backup/restore queue states must be accepted by SetState, otherwise

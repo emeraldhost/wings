@@ -13,9 +13,9 @@ import (
 
 	. "github.com/franela/goblin"
 
-	"github.com/Rene-Roscher/wings/internal/ufs"
+	"github.com/emeraldhost/wings/internal/ufs"
 
-	"github.com/Rene-Roscher/wings/config"
+	"github.com/emeraldhost/wings/config"
 )
 
 func NewFs() (*Filesystem, *rootFs) {

@@ -21,12 +21,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	wserver "github.com/Rene-Roscher/wings/server"
-	"github.com/Rene-Roscher/wings/server/transfer"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/router/tokens"
+	wserver "github.com/emeraldhost/wings/server"
+	"github.com/emeraldhost/wings/server/transfer"
 )
 
 // transferTestUUID is a lowercase version 4 UUID, as the installer requires.

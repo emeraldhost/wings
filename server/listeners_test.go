@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/remote"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/remote"
 )
 
 // stateEnvironment is an environment that records the states it is set to.

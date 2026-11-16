@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Rene-Roscher/wings/internal/progress"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/internal/progress"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 // Archive returns an archive that can be used to stream the contents of the

@@ -10,9 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/Rene-Roscher/wings/router/middleware"
-	"github.com/Rene-Roscher/wings/router/tokens"
-	"github.com/Rene-Roscher/wings/server/backup"
+	"github.com/emeraldhost/wings/router/middleware"
+	"github.com/emeraldhost/wings/router/tokens"
+	"github.com/emeraldhost/wings/server/backup"
 )
 
 // Handle a download request for a server backup.

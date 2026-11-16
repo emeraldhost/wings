@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
 )
 
 // blockingStateEnvironment holds every call to State until it is released.

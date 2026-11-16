@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Rene-Roscher/wings/config"
-	"github.com/Rene-Roscher/wings/environment"
-	"github.com/Rene-Roscher/wings/remote"
-	"github.com/Rene-Roscher/wings/server/backup"
-	"github.com/Rene-Roscher/wings/server/filesystem"
+	"github.com/emeraldhost/wings/config"
+	"github.com/emeraldhost/wings/environment"
+	"github.com/emeraldhost/wings/remote"
+	"github.com/emeraldhost/wings/server/backup"
+	"github.com/emeraldhost/wings/server/filesystem"
 )
 
 const restoreTestUUID = "6a3c2f6e-1b7d-4c8e-9f0a-2d4b6c8e0f12"
